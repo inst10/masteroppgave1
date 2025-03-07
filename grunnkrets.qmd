@@ -1,0 +1,145 @@
+---
+title: "avstand"
+format: html
+editor: visual
+---
+
+```{r}
+library(readxl)
+data <- read_excel("2025_HVL_Stromme_Data.xlsx")
+```
+
+```{r}
+install.packages("sf")
+install.packages("geosphere")
+```
+
+```{r}
+grunnkrets <- st_read("/Users/Ingridstromme/masteroppgave/masteroppgave1/grunnkretser/grunnkrets.shp")
+```
+
+```{r}
+library(sf)
+
+# Opprett sentrumspunkt (Haugesund rådhus)
+sentrum <- st_sfc(st_point(c(5.268, 59.413)), crs = 4326)
+
+# Konverter til samme projeksjon som grunnkretsene
+sentrum <- st_transform(sentrum, st_crs(grunnkrets))
+
+```
+
+```{r}
+st_crs(grunnkrets)  # Sjekk koordinatsystem
+st_crs(sentrum)  # Sjekk at sentrum har samme
+
+```
+
+```{r}
+library(sf)
+
+# Definer koordinatene for rådhuset (Haugesund rådhus)
+rådhus_koord <- data.frame(
+    navn = "Haugesund Rådhus",
+    lon = 5.268,  # Lengdegrad
+    lat = 59.413   # Breddegrad
+)
+
+# Konverter til sf-objekt med WGS 84 (EPSG:4326)
+rådhuset <- st_as_sf(rådhus_koord, coords = c("lon", "lat"), crs = 4326)
+
+# Se koordinatsystemet
+st_crs(rådhuset)
+
+```
+
+```{r}
+rådhuset <- st_transform(rådhuset, crs = 32633)
+
+```
+
+```{r}
+st_crs(grunnkrets)
+st_crs(rådhuset)
+
+```
+
+```{r}
+# Beregn avstand fra hver grunnkrets til rådhuset
+grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
+
+# Se resultatet
+head(grunnkrets[, c("navn_på_grunnkrets", "avstand_sentrum")])
+
+```
+
+```{r}
+colnames(grunnkrets)
+
+```
+
+```{r}
+# Beregn avstand fra hver grunnkrets til rådhuset
+grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
+
+# Se resultatet
+head(grunnkrets[, c("RIKTIG_KOLONNENAVN", "avstand_sentrum")])
+
+```
+
+```{r}
+class(grunnkrets$avstand_sentrum)
+
+```
+
+```{r}
+grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
+
+```
+
+```{r}
+grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
+
+```
+
+```{r}
+head(grunnkrets[, c("grunnkrets", "avstand_sentrum")])
+
+```
+
+```{r}
+# Beregn avstand fra hver grunnkrets til rådhuset
+grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
+
+# Konverter avstanden til numerisk
+grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
+
+# Se resultatet - Bruk et eksisterende kolonnenavn
+head(grunnkrets[, c("grunnkrets", "avstand_sentrum")])
+
+```
+
+```{r}
+write.csv(grunnkrets[, c("grunnkrets", "avstand_sentrum")], "avstand_sentrum.csv", row.names = FALSE)
+
+```
+
+```{r}
+library(ggplot2)
+ggplot(grunnkrets) +
+  geom_sf(aes(fill = avstand_sentrum)) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  ggtitle("Avstand til sentrum (rådhuset)")
+
+```
+
+```{r}
+
+```
+
+```{r}
+model <- lm(log(Realpris) ~ BRA + Soverom + Byggeår + Eierform + Fellesgjeld + avstand_sentrum, data = grunnkrets)
+summary(model)
+
+```

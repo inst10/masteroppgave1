@@ -1,0 +1,1070 @@
+---
+title: "masteroppgave"
+format: html
+editor: visual
+---
+
+## Hente datasett
+
+```{r}
+library(readxl)
+data <- read_excel("2025_HVL_Stromme_Data.xlsx")
+```
+
+```{r}
+# Filtrer datasettet for Haugesund og tidsperioden 2008-2024
+library(dplyr)
+
+# Fjern rader der Pris er NA
+haugesund_data <- data %>%
+  filter(!is.na(Pris))
+
+```
+
+```{r}
+# Beregn gjennomsnittlig og median boligpris
+statistikk <- data %>%
+  summarise(
+    Gjennomsnitt_Pris = mean(Pris, na.rm = TRUE),
+    Median_Pris = median(Pris, na.rm = TRUE)
+  )
+
+# Se resultatet
+print(statistikk)
+```
+
+Median for pris i perioden 2008-2023 i Haugesund er 1 950 000 og gjennomsnittet er 2 260 024.
+
+```{r}
+# Konverter "salgsdato" til Date-format og trekk ut året
+data$År <- as.numeric(format(as.Date(data$Salgsdato), "%Y"))
+
+```
+
+```{r}
+library(dplyr)
+
+data_kvantiler <- data %>%
+  group_by(År) %>%
+  summarise(
+    median_pris = median(Pris, na.rm = TRUE),
+    q25_pris = quantile(Pris, 0.25, na.rm = TRUE),
+    q75_pris = quantile(Pris, 0.75, na.rm = TRUE),
+    total_boliger = n()
+  )
+
+# Se de første radene
+head(data_kvantiler)
+
+```
+
+```{r}
+unique(data$År)
+```
+
+```{r}
+data %>%
+  group_by(År) %>%
+  summarise(antall_boliger = sum(!is.na(Pris))) 
+```
+
+```{r}
+data <- data %>% filter(!is.na(Pris))
+```
+
+```{r}
+library(dplyr)
+
+data_kvantiler <- data %>%
+  group_by(År) %>%
+  summarise(
+    median_pris = median(Pris, na.rm = TRUE),
+    q25_pris = quantile(Pris, 0.25, na.rm = TRUE),
+    q75_pris = quantile(Pris, 0.75, na.rm = TRUE),
+    total_boliger = n()
+  ) %>%
+  arrange(År) # Sørger for at år er i riktig rekkefølge
+
+# Sjekk om alle år er med
+unique(data_kvantiler$År)
+
+```
+
+```{r}
+data <- data %>% filter(!is.na(Pris))
+
+```
+
+### LEGGER INN LØNN DATA unge opptil 30 år i Haugesund
+
+```{r}
+# Lage dataframe med månedslønn per år (hentet fra SSB-dataene dine)
+maanedsloenn <- data.frame(
+  År = 2015:2024,  # Juster til å matche de årene du har lønnsdata for
+  Månedslønn = c(32830, 33060, 33960, 35330, 36410, 36940, 38480, 40420, 42560, 44850)
+)
+
+# Beregn årslønn og maks lånekapasitet
+maanedsloenn <- maanedsloenn %>%
+  mutate(
+    Årslønn = Månedslønn * 12,
+    Maks_Laan = Årslønn * 5
+  )
+
+# Sjekk resultatet
+print(maanedsloenn)
+```
+
+```{r}
+# Slå sammen maks lånekapasitet med boligdataene basert på år
+data_affordability <- data %>%
+  left_join(maanedsloenn, by = "År") %>%
+  group_by(År) %>%
+  summarise(
+    total_boliger = n(),
+    boliger_innenfor_laan = sum(Pris <= Maks_Laan, na.rm = TRUE),
+    affordability = (boliger_innenfor_laan / total_boliger) * 100
+  )
+
+# Sjekk resultatene
+head(data_affordability)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Filtrer data til kun 2015-2024
+data_affordability_filtered <- data_affordability %>%
+  filter(År >= 2015)
+
+# Plot med kun 2015-2024
+ggplot(data_affordability_filtered, aes(x = År, y = affordability)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red") +
+  labs(title = "Utvikling i Affordability for Førstegangskjøpere i Haugesund (2015-2024)",
+       x = "År",
+       y = "Andel boliger innenfor lånekapasitet (%)") +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data_affordability, aes(x = År, y = affordability)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red") +
+  labs(title = "Utvikling i Affordability for Førstegangskjøpere i Haugesund",
+       x = "År",
+       y = "Andel boliger innenfor lånekapasitet (%)") +
+  theme_minimal()
+
+```
+
+### KORRELASJONSANALYSE; PRIS og AFFORDABILITY
+
+```{r}
+# Filtrer datasettet til kun 2015-2024 (siden vi kun har affordability for disse årene)
+data_korrelasjon <- data_affordability_filtered %>%
+  left_join(data_kvantiler, by = "År") %>%
+  select(År, affordability, median_pris)
+
+# Beregne Pearsons korrelasjonskoeffisient
+cor_test_result <- cor.test(data_korrelasjon$affordability, data_korrelasjon$median_pris)
+
+# Skriv ut resultatene
+print(cor_test_result)
+
+```
+
+```{r}
+ggplot(data_korrelasjon, aes(x = median_pris, y = affordability)) +
+  geom_point(color = "red") +
+  geom_smooth(method = "lm", color = "blue", se = TRUE) + 
+  labs(title = "Sammenheng mellom boligpriser og affordability",
+       x = "Median boligpris (kr)",
+       y = "Andel boliger innenfor lånekapasitet (%)") +
+  theme_minimal()
+
+```
+
+### LØNN SLÅS SAMMEN MED AFFORDABILITY DATASETT: PIR
+
+```{r}
+library(dplyr)
+
+# Beregn årslønn fra månedslønn
+maanedsloenn <- maanedsloenn %>%
+  mutate(Årslønn = Månedslønn * 12)
+
+# Slå sammen median boligpris og årslønn
+data_pir <- data_kvantiler %>%
+  left_join(maanedsloenn, by = "År") %>%
+  mutate(PIR = median_pris / Årslønn)
+
+# Sjekk resultatet
+print(data_pir)
+
+```
+
+```{r}
+# Last inn ggplot2
+library(ggplot2)
+library(dplyr)
+
+# Anta at data_pir allerede er lastet inn
+# Sjekk først at variabelnavnene stemmer:
+colnames(data_pir)
+
+# Lag plottet
+ggplot(data_pir, aes(x = År)) + 
+  # Linje for median boligpris
+  geom_line(aes(y = median_pris, color = "Median boligpris"), size = 1) +
+  geom_point(aes(y = median_pris, color = "Median boligpris"), size = 2) +
+  
+  # Linje for årslønn (starter fra 2015)
+  geom_line(aes(y = Årslønn * 5, color = "Årslønn"), size = 1, linetype = "dashed") +  
+  geom_point(aes(y = Årslønn * 5, color = "Årslønn"), size = 2) +  
+
+  # Definer y-aksene
+  scale_y_continuous(
+    name = "Median boligpris (kr)", 
+    sec.axis = sec_axis(~ . / 5, name = "Årslønn (kr)")
+  ) +
+
+  # Definer farger på linjene
+  scale_color_manual(values = c("Median boligpris" = "blue", "Årslønn" = "red")) +
+  
+  # Tittel og etiketter
+  labs(
+    title = "Utvikling av median boligpris og årslønn i Haugesund",
+    x = "År",
+    color = "Variabel"
+  ) +
+
+  # Design
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data_pir, aes(x = År, y = PIR)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "black") +
+  labs(title = "Price-to-Income Ratio (PIR) i Haugesund (2015-2024)",
+       x = "År",
+       y = "PIR (Median boligpris / Årslønn)") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(data_pir, aes(x = År, y = PIR)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "black") +
+  labs(title = "Price-to-Income Ratio (PIR) i Haugesund (2015-2024)",
+       x = "År",
+       y = "PIR (Median boligpris / Årslønn)") +
+  scale_x_continuous(limits = c(2015, 2024)) +  # Setter x-aksens start til 2015
+  theme_minimal()
+
+```
+
+```{r}
+# Slå sammen affordability-data med PIR-data
+data_pir_afford <- data_pir %>%
+  left_join(data_affordability_filtered, by = "År")
+
+# Plot begge variabler
+ggplot() +
+  geom_line(data = data_pir_afford, aes(x = År, y = PIR), color = "red", size = 1, linetype = "solid") +
+  geom_line(data = data_pir_afford, aes(x = År, y = affordability / 10), color = "blue", size = 1, linetype = "dashed") + 
+  labs(title = "Sammenligning av PIR og Affordability (2015-2024)",
+       x = "År",
+       y = "PIR (rød) og Affordability (blå, skalert)") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot() +
+  geom_line(data = data_pir_afford, aes(x = År, y = PIR), 
+            color = "red", size = 1, linetype = "solid") +
+  geom_line(data = data_pir_afford, aes(x = År, y = affordability / 10), 
+            color = "blue", size = 1, linetype = "dashed") +
+  labs(title = "Sammenligning av PIR og Affordability (2015-2024)",
+       x = "År",
+       y = "PIR (rød) og Affordability (blå, skalert)") +
+  scale_x_continuous(limits = c(2015, 2024)) + # Setter x-aksens start til 2015
+  theme_minimal()
+
+```
+
+```{r}
+cor.test(data_pir_afford$PIR, data_pir_afford$affordability)
+
+```
+
+```{r}
+ggplot(data_pir_afford, aes(x = PIR, y = affordability)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  labs(title = "Sammenheng mellom PIR og Affordability",
+       x = "Price-to-Income Ratio (PIR)",
+       y = "Affordability") +
+  theme_minimal()
+
+```
+
+```{r}
+# Anta at du har en dataframe med maks lånekapasitet kalt "maks_laan"
+data_affordability <- data %>%
+  left_join(maks_laan, by = "År") %>%
+  group_by(År) %>%
+  summarise(
+    total_boliger = n(),
+    boliger_innenfor_laan = sum(Pris <= Maks_Laan, na.rm = TRUE),
+    affordability = (boliger_innenfor_laan / total_boliger) * 100
+  ) %>%
+  arrange(År) # Sørger for at data er riktig sortert
+
+# Se resultatene
+head(data_affordability)
+tail(data_affordability) # Sjekk at 2024 er med
+
+```
+
+```{r}
+data_affordability <- data %>%
+  left_join(maks_laan, by = "År") %>%
+  group_by(År) %>%
+  summarise(
+    total_boliger = n(),
+    boliger_innenfor_laan = sum(Pris <= Maks_Laan, na.rm = TRUE),
+    affordability = (boliger_innenfor_laan / total_boliger) * 100
+  )
+
+# Se resultatene
+head(data_affordability)
+
+
+```
+
+### UTVIKLING I BOLIGPRISENE, MEDIAN 25 OG 75 KVANTIL
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Plot boligprisfordeling over tid
+ggplot(data_kvantiler, aes(x = År)) +
+  geom_line(aes(y = median_pris, color = "Medianpris"), size = 1) +
+  geom_line(aes(y = q25_pris, color = "25. persentil"), size = 1, linetype = "dashed") +
+  geom_line(aes(y = q75_pris, color = "75. persentil"), size = 1, linetype = "dashed") +
+  scale_color_manual(values = c("Medianpris" = "blue", 
+                                "25. persentil" = "red", 
+                                "75. persentil" = "green")) +
+  labs(title = "Utvikling i boligprisene i Haugesund (2008-2024)",
+       x = "År",
+       y = "Pris (NOK)",
+       color = "Prisnivå") +
+  theme_minimal()
+
+```
+
+### Pris per kvadratmeter (kr/m²) over tid
+
+```{r}
+library(dplyr)
+
+# Beregn pris per kvadratmeter
+data_kvm <- data %>%
+  mutate(pris_per_m2 = Pris / BRA) %>%  # Beregn kvadratmeterpris
+  group_by(År) %>%
+  summarise(
+    gjennomsnitt_kvmpris = mean(pris_per_m2, na.rm = TRUE),
+    median_kvmpris = median(pris_per_m2, na.rm = TRUE),
+    q25_kvmpris = quantile(pris_per_m2, 0.25, na.rm = TRUE),
+    q75_kvmpris = quantile(pris_per_m2, 0.75, na.rm = TRUE)
+  )
+
+# Se resultatet
+print(data_kvm)
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data_kvm, aes(x = År)) +
+  geom_line(aes(y = median_kvmpris, color = "Medianpris"), size = 1) +
+  geom_line(aes(y = q25_kvmpris, color = "25. persentil"), linetype = "dashed", size = 1) +
+  geom_line(aes(y = q75_kvmpris, color = "75. persentil"), linetype = "dashed", size = 1) +
+  labs(title = "Utvikling i pris per kvadratmeter (kr/m²) i Haugesund (2008-2024)",
+       x = "År",
+       y = "Pris per kvadratmeter (kr/m²)",
+       color = "Prisnivå") +
+  theme_minimal()
+
+```
+
+### Affordability med kun hensyn til leiligheter som boligtype
+
+```{r}
+# Filtrerer datasettet slik at vi kun beholder leiligheter
+data_leilighet <- data |> 
+  filter(Boligtype == "Leilighet") 
+```
+
+```{r}
+table(data_leilighet$Boligtype) # Skal kun inneholde "Leilighet"
+```
+
+```{r}
+library(dplyr)
+
+data_kvantiler_leilighet <- data_leilighet %>%
+  filter(År >= 2015) |> 
+  group_by(År) %>%
+  summarise(
+    median_pris = median(Pris, na.rm = TRUE),
+    q25_pris = quantile(Pris, 0.25, na.rm = TRUE),
+    q75_pris = quantile(Pris, 0.75, na.rm = TRUE),
+    total_boliger = n()
+  )
+
+# Se de første radene
+head(data_kvantiler_leilighet)
+```
+
+```{r}
+View(data_kvantiler_leilighet)
+```
+
+```{r}
+maanedsloenn <- data.frame(
+  År = 2015:2024,  # Juster til å matche de årene du har lønnsdata for
+  Månedslønn = c(32830, 33060, 33960, 35330, 36410, 36940, 38480, 40420, 42560, 44850)
+)
+
+# Beregn årslønn og maks lånekapasitet
+maanedsloenn <- maanedsloenn %>%
+  mutate(
+    Årslønn = Månedslønn * 12,
+    Maks_Laan = Årslønn * 5
+  )
+
+# Sjekk resultatet
+print(maanedsloenn)
+```
+
+```{r}
+# Slå sammen maks lånekapasitet med boligdataene basert på år
+data_affordability_leilighet <- data_leilighet %>%
+  filter(År >= 2015) |> 
+  left_join(maanedsloenn, by = "År") %>%
+  group_by(År) %>%
+  summarise(
+    total_boliger = n(),
+    boliger_innenfor_laan = sum(Pris <= Maks_Laan, na.rm = TRUE),
+    affordability = (boliger_innenfor_laan / total_boliger) * 100
+  )
+
+# Sjekk resultatene
+head(data_affordability_leilighet)
+```
+
+```{r}
+View(data_affordability_leilighet)
+```
+
+```{r}
+library(ggplot2)
+
+# Filtrer data til kun 2015-2024
+data_affordability_filtered2 <- data_affordability_leilighet %>%
+  filter(År >= 2015)
+
+# Plot med kun 2015-2024
+ggplot(data_affordability_filtered2, aes(x = År, y = affordability)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red") +
+  labs(title = "Utvikling i Affordability for Førstegangskjøpere i Haugesund, Leilighet (2015-2024)",
+       x = "År",
+       y = "Andel boliger innenfor lånekapasitet (%)") +
+  theme_minimal()
+```
+
+```{r}
+colnames(data_affordability)
+colnames(data_affordability_leilighet)
+```
+
+```{r}
+# Slå sammen datasettene basert på År
+affordability_sammenligning <- data_affordability %>%
+  rename(affordability_total = affordability) %>% # Gi tydelig navn
+  inner_join(data_affordability_leilighet %>% rename(affordability_leilighet = affordability), by = "År")
+
+```
+
+```{r}
+head(affordability_sammenligning)
+```
+
+```{r}
+View(affordability_sammenligning)
+```
+
+```{r}
+ggplot(affordability_sammenligning, aes(x = År)) +
+  geom_line(aes(y = affordability_total, color = "Alle boliger"), size = 1) +
+  geom_line(aes(y = affordability_leilighet, color = "Leiligheter"), size = 1, linetype = "dashed") +
+  scale_color_manual(values = c("Alle boliger" = "red", "Leiligheter" = "blue")) +
+  labs(
+    title = "Sammenligning av Affordability: Leiligheter vs. Alle boliger",
+    x = "År",
+    y = "Affordability (%)",
+    color = "Boligtype"
+  ) +
+  theme_minimal()
+
+```
+
+### Sammenlikning av affordability: alle boliger vs kun leiligheter
+
+```{r}
+# Laste inn nødvendige pakker
+library(dplyr)
+
+# Anta at datasettet ditt heter "boligdata" og inneholder kolonner for "År" og "Pris"
+bolig_kvantiler <- data %>%
+  group_by(År) %>%
+  summarise(
+    median_pris = median(Pris, na.rm = TRUE),
+    q25_pris = quantile(Pris, 0.25, na.rm = TRUE),
+    q75_pris = quantile(Pris, 0.75, na.rm = TRUE)
+  )
+
+# Vise de første radene av resultatet
+head(bolig_kvantiler)
+
+```
+
+### GEOGRAFISKE OMRÅDER: topp 10 og bunn 10
+
+```{r}
+library(dplyr)
+
+# Beregn gjennomsnittlig pris per grunnkrets
+gjennomsnitt_pris_per_grunnkrets <- data %>%
+  group_by(Grunnkrets) %>%
+  summarise(
+    Gjennomsnitt_Pris = mean(Pris, na.rm = TRUE),
+    Antall_Boliger = n() # Antall boliger per grunnkrets
+  ) %>%
+  arrange(desc(Gjennomsnitt_Pris)) # Sorter etter gjennomsnittspris, høyest først
+
+# Se resultatet
+print(gjennomsnitt_pris_per_grunnkrets)
+
+# Eksporter til CSV hvis ønskelig
+write.csv(gjennomsnitt_pris_per_grunnkrets, "gjennomsnitt_pris_per_grunnkrets.csv", row.names = FALSE)
+
+```
+
+```{r}
+library(dplyr)
+
+haugesund_data <- data %>%
+  mutate(År = format(Salgsdato, "%Y"))
+
+# Beregn gjennomsnittspris per år
+gjennomsnitt_per_år <- haugesund_data %>%
+  group_by(År) %>%
+  summarise(Gjennomsnitt_Pris = mean(Pris, na.rm = TRUE))
+
+# Se resultatet
+print(gjennomsnitt_per_år)
+```
+
+```{r}
+library(dplyr)
+
+# Beregn gjennomsnittlig størrelse (kvadratmeter)
+gjennomsnitt_størrelse <- data %>%
+  summarise(Gjennomsnitt_BRA = mean(BRA, na.rm = TRUE))
+
+# Beregn fordeling av boligtyper
+fordeling_boligtyper <- data %>%
+  count(Boligtype) %>%
+  mutate(Prosent = n / sum(n) * 100)
+
+# Beregn gjennomsnittlig alder på boligene
+data <- data %>%
+  mutate(Bolig_Alder = 2023 - Byggeår)
+
+gjennomsnitt_alder <- data %>%
+  summarise(Gjennomsnitt_Alder = mean(Bolig_Alder, na.rm = TRUE))
+
+# Print resultater
+print(gjennomsnitt_størrelse)
+print(fordeling_boligtyper)
+print(gjennomsnitt_alder)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data, aes(x = BRA)) +
+  geom_histogram(binwidth = 10, fill = "blue", color = "black") +
+  labs(title = "Fordeling av boligers størrelse", x = "Størrelse (kvadratmeter)", y = "Antall boliger")
+
+```
+
+```{r}
+ggplot(fordeling_boligtyper, aes(x = "", y = n, fill = Boligtype)) +
+  geom_bar(stat = "identity", width = 1, color = "black") +
+  coord_polar("y", start = 0) +
+  labs(title = "Fordeling av boligtyper", fill = "Boligtype") +
+  theme_void()
+
+```
+
+### Fordeling av boligtyper
+
+```{r}
+ggplot(data, aes(x = Bolig_Alder)) +
+  geom_histogram(binwidth = 5, fill = "green", color = "black") +
+  labs(title = "Fordeling av boligenes alder", x = "Alder (år)", y = "Antall boliger")
+
+```
+
+```{r}
+library(dplyr)
+
+data <- data %>%
+  mutate(Område = case_when(
+    Grunnkrets %in% c("SENTRUM 1", "SENTRUM 2", "SENTRUM 3", "SENTRUM 4", "SENTRUM 5", 
+                      "SENTRUM 6", "SENTRUM 7", "SENTRUM 8", "SENTRUM 9", "SENTRUM 10", 
+                      "SENTRUM 11", "SENTRUM 12", "SENTRUM 13", "SENTRUM 14", "SENTRUM 15", 
+                      "SENTRUM 17", "SENTRUM 18", "SENTRUM 19", "SENTRUM 20",
+                      "MARITIME SKOLE", "SYKEHUSET", "RISØY", "HØYBLOKKENE", "PRESTHAUGBLOKKENE", "HARALDSHALLEN") ~ "Sentrum",
+    Grunnkrets %in% c("SKÅREDALEN", "BLEIKEMYR", "ROSSABØNAKKEN", "ROSSABØSKOGEN", "ROSSABØ KIRKE",
+                      "HAGLAND", "UDLAND", "DAM", "KOLONIHAGEN", "KÅLGARDSHAUGEN", "HEMMINGSTAD", 
+                      "SVEHAUG", "LILLESUND SKOLE", "GEITAFJELL", "VASSBREKKE", "GRØNÅSEN", 
+                      "GRØNHAUG", "FJELLSTEMMEN ØST", "FJELLSTEMMEN VEST", "KYVIKDALEN", "HEST", 
+                      "RÅGAN", "HOLLENDERHAUGEN", "SØLLERØDFELTET", "Haugaleite", "SOLVANG", 
+                      "SOLVANG SKOLE", "LONGEBJØRG", "HELLANDSMARKA", "DJUPASKAR") ~ "Ytterområder",
+    TRUE ~ "Andre"
+  ))
+
+```
+
+```{r}
+# Beregn gjennomsnittlig boligpris og andre attributter per område
+område_statistikk <- data %>%
+  group_by(Område) %>%
+  summarise(
+    Gjennomsnitt_Pris = mean(Pris, na.rm = TRUE),
+    Median_Pris = median(Pris, na.rm = TRUE),
+    Gjennomsnitt_BRA = mean(BRA, na.rm = TRUE),
+    Gjennomsnitt_Byggeår = mean(Byggeår, na.rm = TRUE),
+    Antall_Boliger = n()
+  )
+
+# Se resultatet
+print(område_statistikk)
+
+```
+
+### Deler inn i sentrum, ytterområder og andre
+
+```{r}
+library(ggplot2)
+ggplot(område_statistikk, aes(x = Område, y = Gjennomsnitt_BRA, fill = Område)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(title = "Gjennomsnittlig størrelse per område", x = "Område", y = "Gjennomsnittlig BRA (m²)") +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(område_statistikk, aes(x = Område, y = Gjennomsnitt_Pris, fill = Område)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(title = "Gjennomsnittlig boligpris per område", x = "Område", y = "Gjennomsnittlig Pris") +
+  theme_minimal()
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Sørg for at Salgsdato er i riktig datoformat
+data$Salgsdato <- as.Date(data$Salgsdato)
+
+# Opprett en variabel for år
+data <- data %>%
+  mutate(År = format(Salgsdato, "%Y"))
+
+# Beregn gjennomsnittsprisen per år
+pris_tidsserie_år <- data %>%
+  group_by(År) %>%
+  summarise(Gjennomsnitt_Pris = mean(Pris, na.rm = TRUE)) %>%
+  arrange(År) # Sorter etter år
+
+# Sjekk resultatene
+print(pris_tidsserie_år)
+
+
+```
+
+```{r}
+ggplot(pris_tidsserie_år, aes(x = as.numeric(År), y = Gjennomsnitt_Pris)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(
+    title = "Utvikling i boligpriser per år",
+    x = "År",
+    y = "Gjennomsnittlig Boligpris (NOK)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+library(dplyr)
+library(knitr)
+
+# Beregn statistikk for ulike boligtyper
+pristabell_boligtyper <- data %>%
+  group_by(Boligtype) %>%
+  summarise(
+    Gjennomsnittspris = mean(Pris, na.rm = TRUE),
+    Medianpris = median(Pris, na.rm = TRUE),
+    Minimumspris = min(Pris, na.rm = TRUE),
+    Maksimumspris = max(Pris, na.rm = TRUE)
+  )
+
+# Lag en enkel tabell med kable
+pristabell_boligtyper %>%
+  kable(
+    format = "markdown",
+    col.names = c("Boligtype", "Gjennomsnittspris", "Medianpris", "Minimumspris", "Maksimumspris"),
+    digits = 0
+  )
+
+
+```
+
+Grunnkrets:
+
+```{r}
+library(dplyr)
+
+grunnkrets_count <- data %>%
+  group_by(Grunnkrets) %>%
+  summarise(Antall_Boliger = n()) %>%
+  arrange(desc(Antall_Boliger)) # Sorterer synkende etter antall boliger
+
+# Se på resultatene
+print(grunnkrets_count)
+
+# Lagre resultatene som en ny fil (hvis ønskelig)
+write.csv(grunnkrets_count, "grunnkrets_antall_sortert.csv", row.names = FALSE)
+
+```
+
+Boligtype:
+
+```{r}
+library(dplyr)
+
+boligtype_count <- data %>%
+  group_by(Boligtype) %>%
+  summarise(Antall_Boliger = n()) %>%
+  arrange(desc(Antall_Boliger)) # Sorterer synkende etter antall boliger
+
+# Se på resultatene
+print(boligtype_count)
+
+# Lagre resultatene som en ny fil (hvis ønskelig)
+write.csv(boligtype_count, "boligtype_antall_sortert.csv", row.names = FALSE)
+```
+
+### Hvordan variabler som BRA eller byggeår påvirker prisen?
+
+BRA og Pris:
+
+```{r}
+# Enkel lineær regresjon med BRA
+model_bra <- lm(Pris ~ BRA, data = data)
+summary(model_bra)
+
+# Enkel lineær regresjon med Byggeår
+model_byggeaar <- lm(Pris ~ Byggeår, data = data)
+summary(model_byggeaar)
+
+```
+
+resultat:
+
+BRA (bruksareal) har mye større forklaringskraft for boligprisene (R-squared = 46.2%) sammenlignet med byggeår (R-squared = 4.65%).
+
+Koeffisientene for begge variabler er signifikante, noe som betyr at både `BRA` og `Byggeår` har en målbar effekt på prisen.
+
+Pris, BRA og byggeår:
+
+```{r}
+# Multippel lineær regresjon med både BRA og Byggeår
+model_multiple <- lm(Pris ~ BRA + Byggeår, data = data)
+summary(model_multiple)
+
+```
+
+resultat:
+
+-   Når bruksarealet øker med én kvadratmeter, øker boligprisen i gjennomsnitt med **11,540 NOK**, forutsatt at byggeåret holdes konstant.
+
+    Koeffisienten er statistisk signifikant (`Pr(>|t|) < 2e-16`), som betyr at effekten av `BRA` på prisen er veldig sterk.
+
+-   **Intercept (-14,160,000)**:
+
+    -   Dette er grunnverdien for boligprisen når både `BRA` og `Byggeår` er 0.
+
+    -   Selv om dette ikke har praktisk mening (ingen bolig har `BRA = 0` eller `Byggeår = 0`), er det nødvendig for modellen.
+
+-   Når byggeåret øker med ett år (dvs. boligen er nyere), øker boligprisen i gjennomsnitt med **7,606 NOK**, forutsatt at bruksarealet holdes konstant.
+
+    Denne variabelen er også statistisk signifikant (`Pr(>|t|) < 2e-16`), som betyr at byggeåret også har en målbar effekt på prisen.
+
+**Hva kan vi tolke fra dette?**
+
+1.  **Begge variablene (BRA og Byggeår) er viktige forklaringsvariabler** for boligpriser, og begge har positiv effekt.
+
+2.  **BRA har større effekt på prisen enn Byggeår**, siden koeffisienten for `BRA` (11,540) er høyere enn for `Byggeår` (7,606).
+
+3.  Modellen forklarer over halvparten av variasjonen i boligprisene (R-squared = 0.52), noe som er bra, men det kan være andre variabler (f.eks. beliggenhet, boligtype) som også har stor innflytelse.
+
+legger til flere variabler:
+
+```{r}
+model_extended <- lm(Pris ~ BRA + Byggeår + Boligtype + Grunnkrets + Eieform, data = data)
+summary(model_extended)
+
+```
+
+resultat:
+
+**BRA (10,600):**
+
+-   For hver ekstra kvadratmeter bruksareal, øker boligprisen med **10,600 NOK**, forutsatt at alle andre variabler holdes konstant.
+
+-   Koeffisienten er svært statistisk signifikant (p-verdi \< 2e-16), noe som betyr at effekten er pålitelig.
+
+**Byggeår (5,735):**
+
+-   For hvert år nyere boligen er, øker prisen med **5,735 NOK**, forutsatt at de andre variablene holdes konstant.
+
+-   Også svært signifikant.
+
+**Boligtype:**
+
+-   Referansekategorien her er sannsynligvis "Enebolig" (den kategorien som ikke eksplisitt er oppført).
+
+-   **Leilighet (7,007):** Øker prisen med 7,007 NOK, men ikke statistisk signifikant (p-verdi = 0.8).
+
+-   **Rekkehus (-20,770):** Har en negativ effekt på prisen, men heller ikke signifikant.
+
+-   **Tomannsbolig (-384,700):** Har en sterk negativ effekt på prisen, og denne er svært signifikant (p-verdi \< 2e-16).
+
+**Grunnkrets:**
+
+-   Grunnkretsene har ulike effekter på prisen, avhengig av plassering.
+    Mange er ikke signifikante, men noen få er:
+
+    -   **DYRSKAR (-1,027,000):** Reduserer prisen med ca.
+        1 million NOK (signifikant, p-verdi = 0.00446).
+
+    -   **SENTRUM 1 (1,734,000):** Øker prisen med 1,734,000 NOK (svært signifikant, p-verdi = 2.62e-07).
+
+**Eieform:**
+
+-   **Selveier (645,100):** Boliger med selveierstatus har en høyere pris i gjennomsnitt sammenlignet med leieboliger. Denne effekten er svært signifikant (p-verdi \< 2e-16).
+
+**Hva betyr dette?**
+
+1.  **BRA og Byggeår er de mest pålitelige prediktorene for boligpriser.**
+
+    -   BRA har en større effekt (10,600 NOK per kvadratmeter) enn Byggeår (5,735 NOK per år).
+
+2.  **Boligtype og Grunnkrets spiller også en rolle, men effektene varierer mye.**
+
+    -   Enkelte grunnkretser og boligtyper har signifikante effekter, men mange har ikke det. Dette kan tyde på at det fortsatt er variabler modellen ikke har inkludert.
+
+3.  **Eieform (selveier) er en viktig variabel:**
+
+    -   Selveierboliger er betydelig dyrere enn andre typer eieformer.
+
+```{r}
+model_interaction <- lm(Pris ~ BRA * Byggeår, data = data)
+summary(model_interaction)
+
+```
+
+resultat:
+
+**Residuals**
+
+-   **Residualene** viser hvordan de observerte prisene avviker fra de predikerte prisene.
+
+    -   Medianen nær null (-121,317) viser at modellen balanserer over- og underprediksjoner rimelig godt.
+
+    -   Ekstreme verdier (f.eks. -7,455,152 og 19,306,987) tyder på at enkelte boligpriser fortsatt ikke forklares godt av modellen.
+
+        **Forklaringsvariabler:**
+
+    -   **Intercept (-8,669,000):**
+
+        -   Dette er grunnprisen for en bolig når både `BRA` og `Byggeår` er 0.
+
+        -   Selv om dette ikke har praktisk mening (ingen bolig har `BRA = 0` eller `Byggeår = 0`), brukes det for å beregne modellen.
+
+    -   **BRA (-29,910):**
+
+        -   Når `BRA` øker med én kvadratmeter, synker boligprisen med **29,910 NOK**, men dette er **betinget av byggeår**.
+
+        -   Dette virker kontraintuitivt, men det skyldes at interaksjonseffekten korrigerer denne effekten (se `BRA:Byggeår` nedenfor).
+
+    -   **Byggeår (4,817):**
+
+        -   Når `Byggeår` øker med ett år, øker boligprisen med **4,817 NOK**, men igjen, dette er betinget av `BRA`.
+
+    -   **BRA:Byggeår (21.05):**
+
+        -   Denne interaksjonseffekten viser at forholdet mellom `BRA` og prisen avhenger av byggeår.
+
+        -   Hver ekstra kvadratmeter i `BRA` har en **ekstra positiv effekt på prisen når byggeår øker**.
+
+        -   For eksempel, hvis byggeåret er høyere, vil effekten av en større `BRA` være mer positiv enn ved et eldre byggeår.
+
+        -   Denne effekten er svært signifikant (`p < 2e-16`).
+
+**Hva betyr dette?**
+
+1.  **Samspilleffekten er signifikant:**
+
+    -   Dette viser at forholdet mellom `BRA` og prisen varierer avhengig av byggeåret.
+
+    -   For nyere boliger (høyere byggeår) vil en økning i `BRA` ha en sterkere positiv effekt på prisen sammenlignet med eldre boliger.
+
+2.  **Individuelle effekter gir ikke fullstendig bilde:**
+
+    -   Når vi inkluderer samspillseffekten, kan de individuelle effektene (`BRA` og `Byggeår`) ikke tolkes isolert. Effekten av `BRA` på prisen avhenger nå av byggeår, og omvendt.
+
+```{r}
+library(ggplot2)
+
+ggplot(data, aes(x = BRA, y = Pris)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(title = "Sammenheng mellom BRA og Pris", x = "BRA", y = "Pris")
+
+```
+
+Tolkning:
+
+-   **Positiv sammenheng:**
+
+    -   Den stigende regresjonslinjen viser at det er en positiv sammenheng mellom `BRA` og `Pris`.
+        Generelt sett: Jo større bruksareal (BRA), jo høyere er boligprisen.
+
+    -   Dette samsvarer med resultatene fra regresjonsmodellen din, der `BRA` hadde en positiv og signifikant effekt på prisen.
+
+-   **Spredning av punkter:**
+
+    -   Det er stor variasjon i prisene, spesielt for boliger med større `BRA` (\>250 m²). Dette kan skyldes andre faktorer som beliggenhet, boligtype, eller byggeår, som ikke er inkludert i denne enkle modellen.
+
+-   **Avvikende observasjoner:**
+
+    -   Enkelte boliger har svært høye priser, som ligger langt fra regresjonslinjen (over 10 millioner NOK).
+        Dette kan være luksusboliger eller spesielle eiendommer som påvirker resultatene.
+
+    -   Du kan vurdere å identifisere eller ekskludere slike outliers hvis de forstyrrer analysen.
+
+```{r}
+ggplot(data, aes(x = Byggeår, y = Pris)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(title = "Sammenheng mellom Byggeår og Pris", x = "Byggeår", y = "Pris")
+
+```
+
+-   Hver prikk representerer en bolig i datasettet.
+    X-aksen viser byggeår (når boligen ble bygget), og Y-aksen viser boligprisen.
+    Den blå linjen er en lineær regresjonslinje som viser den beste tilpasningen mellom `Byggeår` og `Pris`.
+    Den grå skyggen rundt linjen er et konfidensintervall som viser usikkerheten i estimatet.
+
+    **Positiv sammenheng:**
+
+    -   Den stigende regresjonslinjen indikerer en positiv sammenheng mellom `Byggeår` og `Pris`.
+        Generelt sett:
+
+        -   Jo nyere boligen er (høyere byggeår), jo høyere er boligprisen. Dette stemmer med resultatene fra regresjonsmodellen din, der `Byggeår` hadde en positiv og signifikant effekt på prisen.
+
+    **Avvikende observasjoner:**
+
+    -   Det er noen uteliggere tidlig på X-aksen (med svært lave byggeår, muligens feilregistrerte data eller historiske bygninger).
+
+    -   Disse punktene kan forstyrre regresjonen, og du bør vurdere å ekskludere dem dersom de er feilregistreringer.
+
+    **Konsentrasjon mot nyere byggeår:**
+
+    -   De fleste boligene er bygget i nyere tid (etter år 1900), noe som fører til en høy tetthet av punkter i dette området.
+
+    -   Dette gir modellen sterkere forklaringskraft i nyere perioder, men svakere forklaringskraft for veldig gamle byggeår.
+
+    **Svært gamle byggeår (feil?):**
+
+    -   Byggeår som er nær 0 er sannsynligvis feil i datasettet, siden ingen boliger ble bygget for over 1000 år siden.
+
+**Hva dette betyr for analysen din**
+
+1.  **Byggeår har en positiv effekt på pris:**
+
+    -   Nyere boliger har generelt høyere priser, noe som kan skyldes høyere standard, bedre teknologi, eller mer attraktive lokasjoner.
+
+2.  **Uteliggere må undersøkes:**
+
+    -   Bygninger med veldig lave byggeår (0, 500, osv.) bør gjennomgås for å sjekke om de er feilregistreringer.
+
+3.  **Ikke-lineære sammenhenger:**
+
+    -   Det kan være nyttig å utforske om forholdet mellom `Byggeår` og `Pris` er ikke-lineært.
+        For eksempel kan nyere boliger (bygget etter år 2000) ha en mye høyere prisøkning enn eldre boliger.
+
+    -   En log-transformasjon av `Byggeår` eller `Pris` kan bidra til å forbedre modellen.
+
+```{r}
+summary(model_bra)
+```
+
+```{r}
+# Log-transformasjon av pris
+model_log <- lm(log(Pris) ~ BRA + Byggeår, data = data)
+summary(model_log)
+
+```
+
+```{r}
+# Residualplott for å sjekke modellantakelser
+plot(model_multiple)
+
+```
