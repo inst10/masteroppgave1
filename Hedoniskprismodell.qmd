@@ -90,12 +90,21 @@ data$Salgsdato <- NULL
 
 ```
 
+###### Setter inn KPI
+
 ```{r}
+# KPI-data fra SSB med basis 2015
 kpi_data <- data.frame(
-  År = 2008:2024, 
-  KPI = c(100.0, 102.5, 104.8, 107.2, 109.6, 112.1, 114.8, 117.5, 120.1, 
-          123.0, 126.0, 129.1, 132.4, 135.7, 139.1, 142.6, 146.2)
+  År = 2008:2024,
+  KPI = c(88.0, 89.9, 92.1, 93.3, 93.9, 95.9, 97.9, 100.0, 103.6, 105.5, 108.4, 
+          110.8, 112.2, 116.1, 122.8, 129.6, 133.6) 
 )
+
+# Juster KPI slik at 2008 = 100
+kpi_data$KPI_justert <- (kpi_data$KPI / kpi_data$KPI[kpi_data$År == 2008]) * 100
+
+# Sjekk tallene
+print(kpi_data)
 
 ```
 
@@ -105,8 +114,9 @@ data <- merge(data, kpi_data, by.x = "Salgsår", by.y = "År", all.x = TRUE)
 # Sjekk at sammenslåingen fungerte
 summary(data$KPI)
 table(is.na(data$KPI))  # Sjekk om noen rader har manglende KPI-verdier
-
 ```
+
+###### Får realpris
 
 ```{r}
 data$Realpris <- (data$Pris + data$Fellesgjeld) * (100 / data$KPI)
@@ -156,21 +166,44 @@ nrow(data_clean)
 
 ```
 
-### **Dummy variabel for grunnkretser som ikke finnes:**
+###### Legger til Alder\^2
 
 ```{r}
-data$grunnkrets_mangler <- ifelse(data$grunnkrets %in% manglende_grunnkretser, 1, 0)
+library(dplyr)
+
+# Filtrer ut boliger eldre enn 150 år
+data_clean <- data_clean %>% filter(Alder <= 2000)
+
+# Sjekk fordeling etter filtrering
+summary(data_clean$Alder)
+hist(data_clean$Alder, breaks = 50, main = "Aldersfordeling etter filtrering")
+```
+
+sletter variabler jeg ikke trenger
+
+```{r}
+library(dplyr)
+
+# Fjern unødvendige variabler
+data_clean <- data_clean %>%
+  select(-EiendomsID, -Kommune, -Etasje, -Tomtestørrelse, 
+       -Grunnkretskode.x, -Avstand_km.x)
+
+# Sjekk at variablene er fjernet
+glimpse(data_clean)  # Eller bruk: colnames(data_clean)
 
 ```
 
-Husk å definere hvilke grunnkretser som mangler, f.eks.:
-
 ```{r}
-manglende_grunnkretser <- c("Grunnkrets1", "Grunnkrets2") 
+library(dplyr)
+
+data_clean <- data_clean %>%
+  rename(
+    Grunnkretskode = Grunnkretskode.y,
+    Avstand_km = Avstand_km.y
+  )
 
 ```
-
-Dette må gjøres når jeg har fått avstand fra sentrum
 
 #### **Lineær regresjon med Realpris (justert for KPI) som avhengig variabel:**
 
@@ -185,22 +218,32 @@ Resultat:
 #### Log transformasjon:
 
 ```{r}
+# Sett ønskede referansekategorier
+data_clean$Boligtype <- relevel(factor(data_clean$Boligtype), ref = "Leilighet")
+data_clean$Eieform <- relevel(factor(data_clean$Eieform), ref = "Selveier")
+data_clean$Salgsår <- relevel(factor(data_clean$Salgsår), ref = "2008")
+
+```
+
+```{r}
 # Log-transformert regresjon
-model_log <- lm(log(Realpris) ~ BRA + Soverom + Byggeår + Boligtype + Eieform + Grunnkrets + Alder + factor(Salgsår) + Fellesgjeld, 
+model_log <- lm(log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + Fellesgjeld + Avstand_km + factor(Boligtype) + factor(Eieform) + factor(Salgsår) + factor(Grunnkrets), 
                 data = data_clean)
 
 summary(model_log)
 
 ```
 
-tolkning:
-
 ```{r}
-contrasts(data_clean$Boligtype)
-contrasts(data_clean$Eieform)
-contrasts(data_clean$Salgsår)
-
+ggplot(data_clean, aes(x = Alder, y = log(Realpris))) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE, color = "blue") +
+  labs(title = "Sammenheng mellom boligpris og alder",
+       x = "Alder på bolig",
+       y = "Log(realpris)")
 ```
+
+tolkning:
 
 Konfidensintervall
 
@@ -285,17 +328,17 @@ summary(model_fellesgjeld)
 
 ```
 
-#### BRA som avhengig variabel
+Resultatet:\
+**Boligtype:** Leiligheter og rekkehus har sannsynligvis høyere sannsynlighet for å ha fellesgjeld sammenlignet med eneboliger.
 
-```{r}
-model_BRA <- lm(BRA ~ Byggeår + Boligtype + Eieform + Grunnkrets + factor(Salgsår) + Fellesgjeld, 
-                data = data_clean)
+**Eieform:** Borettslag vil sannsynligvis ha **høyere sannsynlighet for fellesgjeld** enn selveierboliger.
 
-summary(model_BRA)
+**Byggeår og alder:** Nyere boliger kan ha høyere sannsynlighet for fellesgjeld hvis mange er solgt i borettslag.
+Eldre boliger kan ha lavere fellesgjeld fordi lånene kan være nedbetalt.
 
-```
+**BRA (størrelse) og soverom:** Større boliger kan ha lavere sannsynlighet for fellesgjeld hvis de hovedsakelig er selveier.
 
-resultat:
+**Salgsår (factor(Salgsår)):** Hvis sannsynligheten for fellesgjeld har endret seg over tid, vil dette fanges opp av års-dummyene.
 
 #### Heteroskedastisitet
 
@@ -329,13 +372,18 @@ flextable(bp_table) |>
 
 ```
 
-*For å teste for heteroskedastisitet ble Breusch-Pagan-testen gjennomført. Testen har følgende hypoteser:*
+For å sikre at modellestimatene er robuste, har jeg testet og justert for heteroskedastisitet i den log-transformerte hedoniske prismodellen.
+For å teste for heteroskedastisitet ble Breusch-Pagan-testen gjennomført.
+Testen har følgende hypoteser:
 
--   *H₀: Variansen til residualene er konstant (homoskedastisitet).*
+  H₀: Variansen til residualene er konstant (homoskedastisitet).
 
--   *H₁: Variansen til residualene er ikke konstant og avhenger av de uavhengige variablene (heteroskedastisitet).*
+· H₁: Variansen til residualene er ikke konstant og avhenger av de uavhengige variablene (heteroskedastisitet).
 
-*Resultatet av testen viser en teststatistikk på **BP = 5910**, med en **p-verdi \< 2.2e-16**. Siden p-verdien er svært lav, kan nullhypotesen om homoskedastisitet forkastes til fordel for alternativhypotesen. Dette indikerer at det er heteroskedastisitet i modellen, noe som kan føre til upålitelige standardfeil og p-verdier. For å korrigere for dette benyttes robuste standardfeil i videre analyser.*
+Resultatet av testen viser en teststatistikk på BP = 1516.5, med en p-verdi \< 2.2e-16.
+Siden p-verdien er svært lav, kan nullhypotesen om homoskedastisitet forkastes til fordel for alternativhypotesen.
+Dette indikerer at det er heteroskedastisitet i modellen, noe som kan føre til upålitelige standardfeil og p-verdier.
+For å korrigere for dette benyttes robuste standardfeil i videre analyser.
 
 Videre bruker vi regresjon mot robuste standardfeil.
 
@@ -349,17 +397,21 @@ coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))
 
 Resultat av heteroskedastisitet:
 
-Hovedfunnene fra analysen forblir stort sett uendret.
-Variablene BRA, soverom og byggeår er fortsatt sterkt signifikante med forventet positiv effekt på boligprisene.
+Videre ble det brukt regresjon med robuste standardfeil for å redusere risikoen for feiltolkning av standardfeilene som følge av heteroskedastisitet.
+De viktigste funnene fra analysen forblir stort sett uendret.
+Variablene BRA, soverom og alder er fortsatt sterkt signifikante og har forventet positiv sammenheng med boligpriser.
 Eieform viser fremdeles at selveierboliger er betydelig dyrere enn borettslagsboliger.
-Fellesgjeld har fortsatt en negativ sammenheng med boligpriser, og denne effekten er robust etter justeringen.
+Fellesgjeld har fortsatt en positiv sammenheng med boligprisene, noe som trolig skyldes at totalprisen inkluderer fellesgjeld.
 
-Når det gjelder tidsdummier, viser flere år fortsatt sterke effekter på boligprisene, spesielt 2019, 2020 og 2021.
-Dette kan knyttes til endringer i markedsforhold, renteendringer eller boliglånsforskriften.
-På geografisk nivå er det fortsatt signifikante forskjeller mellom grunnkretser, noe som bekrefter at beliggenhet spiller en viktig rolle i boligprisene i Haugesund.
+Når det gjelder **tidsdummyer**, ser vi at flere år fortsatt har signifikante effekter på boligprisene.
+Spesielt **2010-2024** har positive og signifikante koeffisienter, noe som indikerer at boligprisene har økt over tid.
+På geografisk nivå bekreftes betydningen av beliggenhet i Haugesunds boligmarked.
+Flere grunnkretser viser sterke effekter, spesielt **Ramsdalen, Rossabønakken, Fjellstemmen Vest og Torevarden**, som har positiv sammenheng med boligpriser, mens **Røvær har en negativ sammenheng**.
 
-Samlet sett styrker justeringen for robuste standardfeil påliteligheten til modellen ved å redusere risikoen for feilkonklusjoner som følge av heteroskedastisitet.
+Samlet sett styrker justeringen for robuste standardfeil modellens pålitelighet ved å redusere risikoen for feiltolkning som følge av heteroskedastisitet.
 Resultatene kan dermed tolkes med høyere grad av sikkerhet.
+
+##### Denne koden tester **signifikansen til koeffisientene** i regresjonen din, men **med standardfeil justert for klynger på grunnkretsnivå**.
 
 ```{r}
 coeftest(model_log, vcov = vcovCL(model_log, cluster = ~Grunnkrets))
@@ -391,8 +443,14 @@ Ved å bruke cluster-robuste standardfeil sikres mer pålitelige estimater, noe 
 #### BRA og realpris, varierer over tid
 
 ```{r}
-model_interaksjon <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + Byggeår + Boligtype + Eieform + Grunnkrets + Alder + Fellesgjeld, data = data_clean)
+model_interaksjon <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + 
+                        Byggeår + factor(Boligtype) + factor(Eieform) + 
+                        factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld + 
+                        Avstand_km + factor(Salgsår), data = data_clean)
+summary(model_interaksjon)
 ```
+
+Undersøk dette: koden vriker ikke med nye koder så finn ut dette
 
 ```{r}
 # Pakker
@@ -498,6 +556,38 @@ Resultatene er i tråd med tidligere studier som viser at:
 -   **Eieform og boligtype har sterk innflytelse**, der selveierboliger og eneboliger er dyrere enn borettslagsboliger og leiligheter.
 
 #### Robust analyse
+
+```{r}
+# Filtrer datasettene for hver boligtype
+data_leilighet <- subset(data_clean, Boligtype == "Leilighet")
+data_enebolig <- subset(data_clean, Boligtype == "Enebolig")
+data_rekkehus <- subset(data_clean, Boligtype == "Rekkehus")
+data_tomanns <- subset(data_clean, Boligtype == "Tomannsbolig")
+
+# Kjøre separate regresjoner for hver boligtype
+model_leilighet <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + Byggeår + 
+                         factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + 
+                         Fellesgjeld + Avstand_km, data = data_leilighet)
+
+model_enebolig <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + Byggeår + 
+                         factor(Grunnkrets) + Alder + I(Alder^2) + Avstand_km, 
+                         data = data_enebolig)
+
+model_rekkehus <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + Byggeår + 
+                         factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + 
+                         Fellesgjeld + Avstand_km, data = data_rekkehus)
+
+model_tomanns <- lm(log(Realpris) ~ BRA * factor(Salgsår) + Soverom + Byggeår + 
+                         factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + 
+                         Fellesgjeld + Avstand_km, data = data_tomanns)
+
+# Se på resultatene
+summary(model_leilighet)
+summary(model_enebolig)
+summary(model_rekkehus)
+summary(model_tomanns)
+
+```
 
 ```{r}
 # Modell for leiligheter
@@ -683,210 +773,9 @@ ci_lister[["Tomannsbolig"]]
 
 ```
 
-### ALder\^2
+### 
 
-```{r}
-library(dplyr)
-
-# Filtrer ut boliger eldre enn 150 år
-data_clean <- data_clean %>% filter(Alder <= 150)
-
-# Sjekk fordeling etter filtrering
-summary(data_clean$Alder)
-hist(data_clean$Alder, breaks = 50, main = "Aldersfordeling etter filtrering")
-
-```
-
-```{r}
-model2 <- lm(log(Realpris) ~ BRA + Soverom + Byggeår + Eieform + 
-             Grunnkrets + Alder + I(Alder^2) + factor(Salgsår) + Fellesgjeld, 
-             data = data_clean)
-
-summary(model2)
-```
-
-```{r}
-ggplot(data_clean, aes(x = Alder, y = log(Realpris))) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE, color = "blue") +
-  labs(title = "Sammenheng mellom boligpris og alder",
-       x = "Alder på bolig",
-       y = "Log(realpris)")
-
-```
-
-#### Grunnkrets
-
-```{r}
-grunnkrets <- st_read("/Users/Ingridstromme/masteroppgave/masteroppgave1/grunnkretser/grunnkrets.shp")
-```
-
-```{r}
-library(sf)
-
-# Opprett sentrumspunkt (Haugesund rådhus)
-sentrum <- st_sfc(st_point(c(5.268, 59.413)), crs = 4326)
-
-# Konverter til samme projeksjon som grunnkretsene
-sentrum <- st_transform(sentrum, st_crs(grunnkrets))
-```
-
-```{r}
-st_crs(grunnkrets)  # Sjekk koordinatsystem
-st_crs(sentrum)  # Sjekk at sentrum har samme
-```
-
-```{r}
-library(sf)
-
-# Definer koordinatene for rådhuset (Haugesund rådhus)
-rådhus_koord <- data.frame(
-    navn = "Haugesund Rådhus",
-    lon = 5.268,  # Lengdegrad
-    lat = 59.413   # Breddegrad
-)
-
-# Konverter til sf-objekt med WGS 84 (EPSG:4326)
-rådhuset <- st_as_sf(rådhus_koord, coords = c("lon", "lat"), crs = 4326)
-
-# Se koordinatsystemet
-st_crs(rådhuset)
-
-```
-
-```{r}
-rådhuset <- st_transform(rådhuset, crs = 32633)
-```
-
-```{r}
-st_crs(grunnkrets)
-st_crs(rådhuset)
-```
-
-```{r}
-# Beregn avstand fra hver grunnkrets til rådhuset
-grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
-
-# Se resultatet
-head(grunnkrets[, c("navn_på_grunnkrets", "avstand_sentrum")])
-```
-
-```{r}
-colnames(grunnkrets)
-```
-
-```{r}
-# Beregn avstand fra hver grunnkrets til rådhuset
-grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
-
-# Se resultatet
-head(grunnkrets[, c("RIKTIG_KOLONNENAVN", "avstand_sentrum")])
-```
-
-```{r}
-class(grunnkrets$avstand_sentrum)
-```
-
-```{r}
-grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
-
-```
-
-```{r}
-grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
-
-```
-
-```{r}
-head(grunnkrets[, c("grunnkrets", "avstand_sentrum")])
-
-```
-
-```{r}
-# Beregn avstand fra hver grunnkrets til rådhuset
-grunnkrets$avstand_sentrum <- st_distance(grunnkrets, rådhuset)
-
-# Konverter avstanden til numerisk
-grunnkrets$avstand_sentrum <- as.numeric(grunnkrets$avstand_sentrum)
-
-# Se resultatet - Bruk et eksisterende kolonnenavn
-head(grunnkrets[, c("grunnkrets", "avstand_sentrum")])
-
-```
-
-```{r}
-write.csv(grunnkrets[, c("grunnkrets", "avstand_sentrum")], "avstand_sentrum.csv", row.names = FALSE)
-
-```
-
-```{r}
-library(ggplot2)
-ggplot(grunnkrets) +
-  geom_sf(aes(fill = avstand_sentrum)) +
-  scale_fill_viridis_c() +
-  theme_minimal() +
-  ggtitle("Avstand til sentrum (rådhuset)")
-```
-
-```{r}
-colnames(data_clean)  # Se hvilke kolonnenavn som finnes i boligdatasettet
-colnames(grunnkrets)  # Se hvilke kolonner som finnes i grunnkrets-datasettet
-
-```
-
-```{r}
-colnames(grunnkrets)[colnames(grunnkrets) == "grunnkrets"] <- "Grunnkrets"
-
-```
-
-```{r}
-boligdata <- data_clean %>%
-  left_join(grunnkrets %>% select(Grunnkrets, avstand_sentrum), by = c("Grunnkrets" = "Grunnkrets"))
-```
-
-```{r}
-summary(boligdata$avstand_sentrum)
-table(is.na(boligdata$avstand_sentrum))
-
-```
-
-```{r}
-table(boligdata$Grunnkrets %in% grunnkrets$Grunnkrets)
-
-```
-
-```{r}
-boligdata$Grunnkrets <- as.character(boligdata$Grunnkrets)
-grunnkrets$Grunnkrets <- as.character(grunnkrets$Grunnkrets)
-
-```
-
-```{r}
-boligdata <- boligdata %>%
-  left_join(grunnkrets[, c("grunnkre_1", "avstand_sentrum")], 
-            by = c("Grunnkrets" = "grunnkre_1"))
-
-```
-
-```{r}
-summary(boligdata$avstand_sentrum)
-
-```
-
-```{r}
-unique(boligdata$Grunnkrets)
-unique(grunnkrets$Grunnkrets)
-
-```
-
-```{r}
-model3 <- lm(log(Realpris) ~ BRA + Soverom + Byggeår + Boligtype + Eieform + 
-              Alder + I(Alder^2) + Grunnkrets + factor(Salgsår) + Fellesgjeld + 
-              log(avstand_sentrum), 
-              data = boligdata)
-summary(model3)
-
-```
+#### 
 
 ### Predikere priser
 
