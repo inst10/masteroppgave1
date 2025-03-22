@@ -104,34 +104,26 @@ data$Salgsdato <- NULL
 ###### Setter inn KPI
 
 ```{r}
-# KPI-data fra SSB med basis 2015
 kpi_data <- data.frame(
   År = 2008:2024,
   KPI = c(88.0, 89.9, 92.1, 93.3, 93.9, 95.9, 97.9, 100.0, 103.6, 105.5, 108.4, 
           110.8, 112.2, 116.1, 122.8, 129.6, 133.6) 
 )
 
-# Juster KPI slik at 2008 = 100
 kpi_data$KPI_justert <- (kpi_data$KPI / kpi_data$KPI[kpi_data$År == 2008]) * 100
-
-# Sjekk tallene
-print(kpi_data)
-
 ```
 
 ```{r}
 data <- merge(data, kpi_data, by.x = "Salgsår", by.y = "År", all.x = TRUE)
 
-# Sjekk at sammenslåingen fungerte
 summary(data$KPI)
-table(is.na(data$KPI))  # Sjekk om noen rader har manglende KPI-verdier
+table(is.na(data$KPI))
 ```
 
 ###### Får realpris
 
 ```{r}
 data$Realpris <- (data$Pris + data$Fellesgjeld) * (100 / data$KPI)
-summary(data$Realpris)
 ```
 
 ```{r}
@@ -209,6 +201,31 @@ data_clean <- data_clean %>%
 
 ```
 
+setter fellesgjeld til Dummy 0 og 1
+
+```{r}
+data_clean$har_fellesgjeld <- ifelse(data_clean$Fellesgjeld > 0, 1, 0)
+
+```
+
+skiller mellom leilighet selveier og leilighet borettslag (**denne koden er ikke kjørt!!**!!)
+
+```{r}
+# Sørg for at Boligtype og Eieform er tekst
+data_clean$Boligtype <- as.character(data_clean$Boligtype)
+data_clean$Eieform <- as.character(data_clean$Eieform)
+
+# Oppdater boligtype: Splitt "Leilighet" i to kategorier
+data_clean$Boligtype[data_clean$Boligtype == "Leilighet" & data_clean$Eieform == "Selveier"] <- "Leilighet_Selveier"
+data_clean$Boligtype[data_clean$Boligtype == "Leilighet" & data_clean$Eieform == "Borettslag"] <- "Leilighet_Borettslag"
+
+# Konverter tilbake til faktor og sett ønsket rekkefølge (rekkehus som referanse)
+data_clean$Boligtype <- factor(data_clean$Boligtype, levels = c("Rekkehus", "Enebolig", "Tomannsbolig", "Leilighet_Selveier", "Leilighet_Borettslag"))
+
+# Sjekk resultatet
+table(data_clean$Boligtype)
+```
+
 #### **Lineær regresjon med Realpris (justert for KPI) som avhengig variabel:**
 
 ```{r}
@@ -221,7 +238,7 @@ summary(model1)
 
 ```{r}
 # Sett ønskede referansekategorier
-data_clean$Boligtype <- relevel(factor(data_clean$Boligtype), ref = "Leilighet")
+data_clean$Boligtype <- relevel(factor(data_clean$Boligtype), ref = "Rekkehus")
 data_clean$Eieform <- relevel(factor(data_clean$Eieform), ref = "Selveier")
 data_clean$Salgsår <- relevel(factor(data_clean$Salgsår), ref = "2008")
 
@@ -235,11 +252,10 @@ model_log <- data_clean |>
   mutate(
     Boligtype = fct(as.character(Boligtype)),
     Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår)),
-    Grunnkrets = fct(as.character(Grunnkrets))
+    Salgsår = fct(as.character(Salgsår))
   ) %>%
   lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + Fellesgjeld + Avstand_km + Boligtype + Eieform + Salgsår + Grunnkrets,
+    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Boligtype + Eieform + Salgsår,
     data = .
     )
 
@@ -357,11 +373,11 @@ library(flextable)
 
 # Lag en data frame med regresjonsresultatene
 tbl_regresjon <- data.frame(
-  Variabel = rownames(coeftest(model_log2, vcov = vcovHC(model_log2, type = "HC1"))),
-  Estimate = coeftest(model_log2, vcov = vcovHC(model_log2, type = "HC1"))[,1],
-  Std_Error = coeftest(model_log2, vcov = vcovHC(model_log2, type = "HC1"))[,2],
-  t_value = coeftest(model_log2, vcov = vcovHC(model_log2, type = "HC1"))[,3],
-  p_value = coeftest(model_log2, vcov = vcovHC(model_log2, type = "HC1"))[,4]
+  Variabel = rownames(coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))),
+  Estimate = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,1],
+  Std_Error = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,2],
+  t_value = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,3],
+  p_value = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,4]
 )
 
 # Lag en flextable for å formatere tabellen pent
@@ -699,7 +715,7 @@ model_log_leil <- data_leilighet |>
     Grunnkrets = fct(as.character(Grunnkrets))
   ) %>%
   lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + Fellesgjeld + Avstand_km + Eieform + Salgsår,
+    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Eieform + Salgsår,
     data = .
     )
 
@@ -1206,10 +1222,6 @@ Resultat: Når avstanden til sentrum øker med **1 km**, reduseres den log-trans
 Siden modellen er log-lineær, betyr dette at **boligprisen faller med ca. 3.44 % per km lengre unna sentrum** (ceteris paribus).
 Dette viser at avstand til sentrum er en viktig forklaringsvariabel for boligpriser.
 
-![](images/clipboard-1659538528.png)
-
-![](images/clipboard-2624745057.png)
-
 ### Regresjon kun med leiligheter og uten grunnkrets:
 
 ```{r}
@@ -1445,10 +1457,65 @@ pris_statistikk %>%
 
 ```
 
-annen måte å predikere priser: OBS dette er bare leiligheter:
+**annen måte å predikere priser: OBS alle boligtyper**
 
 ```{r}
-# Definer data
+# Funksjon for å predikere for én boligtype
+prediker_boligtype <- function(data, boligtype_navn) {
+  data_bolig <- data %>%
+    filter(Boligtype == boligtype_navn)
+
+  prediksjoner <- predict(model_fit, new_data = data_bolig)
+
+  data_bolig <- data_bolig %>%
+    mutate(Predikert_logpris = prediksjoner$.pred) %>%
+    mutate(Predikert_Pris = exp(Predikert_logpris))
+
+  return(data_bolig)
+}
+
+```
+
+```{r}
+data_clean$Salgsår <- as.numeric(as.character(data_clean$Salgsår))
+
+# Liste over boligtypene du har i datasettet
+boligtyper <- c("Leilighet", "Enebolig", "Rekkehus", "Tomannsbolig")
+
+# Bruk funksjonen for å lage ett datasett med prediksjoner for alle
+data_predikert <- lapply(boligtyper, function(bt) prediker_boligtype(data_clean, bt)) %>%
+  bind_rows()
+
+```
+
+```{r}
+library(dplyr)
+library(flextable)
+
+summary_stats <- data_predikert %>%
+  group_by(Boligtype) %>%
+  summarise(
+    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
+    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
+    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
+    Median_Faktisk = median(Realpris, na.rm = TRUE)
+  )
+
+# Lag en flextable
+tbl_summary <- summary_stats %>%
+  flextable() %>%
+  colformat_num(j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Faktisk", 
+                      "Median_Predikert", "Median_Faktisk"), digits = 0, big.mark = " ") %>%
+  set_caption("Sammenligning av predikert og faktisk boligpris per boligtype") %>%
+  autofit()
+
+tbl_summary
+
+```
+
+**Kun leiligheter:**
+
+```{r}
 data_leilighet <- subset(data_clean, Boligtype == "Leilighet")
 
 # Lag en ny variabel med log-transformert pris (kun for trening)
@@ -1492,14 +1559,11 @@ print(prediksjoner)
 Predikere boligpriser
 
 ```{r}
-# Forutsi boligpriser
 prediksjoner <- predict(model_fit, new_data = data_leilighet)
 
-# Legg til prediksjonene i datasettet
 data_leilighet <- data_leilighet %>%
   mutate(Predikert_logpris = prediksjoner$.pred)
 
-# Konverter tilbake fra log-verdi til faktisk pris
 data_leilighet <- data_leilighet %>%
   mutate(Predikert_Pris = exp(Predikert_logpris))
 
@@ -1531,13 +1595,104 @@ tbl_summary
 ```
 
 ```{r}
-# Predikere kun for selveierleiligheter
-data_selveier <- data_leilighet %>% filter(Eieform == "Selveier")
-prediksjon_selveier <- predict(model_fit, new_data = data_selveier)
+data_leilighet <- subset(data_clean, Boligtype == "Leilighet")
 
-# Predikere kun for borettslagsleiligheter
-data_borettslag <- data_leilighet %>% filter(Eieform == "Borettslag")
-prediksjon_borettslag <- predict(model_fit, new_data = data_borettslag)
+```
+
+```{r}
+# Sammenlign gjennomsnittlig predikert pris vs faktisk pris for selveier og borettslag
+summary_stats <- data_leilighet %>%
+  group_by(Eieform) %>%  # 👈 Gruppér etter Eieform!
+  summarise(
+    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
+    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
+    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
+    Median_Faktisk = median(Realpris, na.rm = TRUE)
+  )
+
+# Konverter til flextable
+tbl_summary <- summary_stats %>%
+  flextable() %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Faktisk", 
+          "Median_Predikert", "Median_Faktisk"),
+    digits = 0,
+    big.mark = " "
+  ) %>%
+  set_caption("Sammenligning av predikert og faktisk boligpris for selveier og borettslag") %>%
+  autofit()
+
+# Vis tabellen
+tbl_summary
+
+```
+
+Skiller mellom 1 soverom og 2 på leiligheter
+
+```{r}
+library(dplyr)
+
+# Funksjon som lager testdata og predikerer pris
+prediker_leilighet_sov <- function(eieform_navn) {
+  ny_data <- tibble(
+    BRA = mean(data_clean$BRA, na.rm = TRUE),
+    Soverom = c(1, 2),
+    Alder = mean(data_clean$Alder, na.rm = TRUE),
+    Avstand_km = mean(data_clean$Avstand_km, na.rm = TRUE),
+    har_fellesgjeld = 0,
+    Fellesgjeld = 0,
+    Boligtype = "Leilighet",
+    Eieform = eieform_navn,
+    Salgsår = 2020
+  )
+
+  ny_data$`I(Alder^2)` <- ny_data$Alder^2
+
+  pred <- predict(model_fit, new_data = ny_data)
+  ny_data$Pris_pred <- as.numeric(exp(pred$.pred))
+
+  return(ny_data %>% select(Eieform, Soverom, Pris_pred))
+}
+
+# Kjør for både Selveier og Borettslag
+pred_selveier <- prediker_leilighet_sov("Selveier")
+pred_borettslag <- prediker_leilighet_sov("Borettslag")
+
+# Kombiner resultatene
+pred_resultat <- bind_rows(pred_selveier, pred_borettslag)
+
+# Vis som flextable
+library(flextable)
+
+pred_resultat %>%
+  flextable() %>%
+  colformat_num(j = "Pris_pred", digits = 0, big.mark = " ") %>%
+  set_caption("Predikert boligpris for leiligheter med 1 og 2 soverom, alt annet likt") %>%
+  autofit()
+
+```
+
+```{r}
+library(dplyr)
+
+# Filtrer faktiske leiligheter (med Salgsår 2020 for konsistens, hvis ønsket)
+faktiske_leiligheter <- data_clean %>%
+  filter(Boligtype == "Leilighet", Soverom %in% c(1, 2)) %>%
+  group_by(Eieform, Soverom) %>%
+  summarise(Faktisk_Pris = mean(Realpris, na.rm = TRUE), .groups = "drop")
+
+# Kombiner med predikert
+sammenligning <- pred_resultat %>%
+  left_join(faktiske_leiligheter, by = c("Eieform", "Soverom"))
+
+# Vis med flextable
+library(flextable)
+
+sammenligning %>%
+  flextable() %>%
+  colformat_num(j = c("Pris_pred", "Faktisk_Pris"), digits = 0, big.mark = " ") %>%
+  set_caption("Sammenligning av predikert og faktisk pris for leiligheter med 1 og 2 soverom") %>%
+  autofit()
 
 ```
 
