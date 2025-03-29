@@ -1068,3 +1068,222 @@ summary(model_log)
 plot(model_multiple)
 
 ```
+
+Beskrivende statistikk
+
+```{r}
+# Last inn nødvendige pakker
+library(ggplot2)
+
+# Lag datasettet
+førstegangskjøpere <- data.frame(
+  År = 2008:2023,
+  Antall = c(536, 417, 455, 421, 421, 406, 432, 375, 411, 321, 356, 351, 395, 399, 372, 336)
+)
+
+# Plot linjediagram
+ggplot(førstegangskjøpere, aes(x = År, y = Antall)) +
+  geom_line(color = "#0072B2", size = 1.2) +
+  geom_point(color = "#0072B2", size = 2) +
+  labs(
+    title = "Antall førstegangskjøpere per år i Haugesund",
+    x = "År",
+    y = "Antall førstegangskjøpere"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 11)
+  )
+
+```
+
+```{r}
+# Last inn nødvendige pakker
+library(ggplot2)
+
+# Lag datasettet for Norge
+data_norge <- data.frame(
+  År = 2008:2023,
+  Antall = c(52411, 52204, 51889, 54902, 52144, 50163, 51079, 51021,
+             48245, 48159, 50622, 51438, 54576, 55918, 50342, 47237)
+)
+
+# Lag linjediagram
+ggplot(data_norge, aes(x = År, y = Antall)) +
+  geom_line(color = "#0072B2", size = 1.2) +
+  geom_point(color = "#0072B2", size = 2) +
+  labs(
+    title = "Antall førstegangskjøpere per år i Norge",
+    x = "År",
+    y = "Antall førstegangskjøpere"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title = element_text(size = 12)
+  )
+
+```
+
+```{r}
+# Last inn pakke
+library(ggplot2)
+
+# Lag datasett
+data_andel <- data.frame(
+  År = rep(2008:2023, 2),
+  Andel = c(
+    # Haugesund
+    1.61, 1.23, 1.33, 1.21, 1.19, 1.13, 1.19, 1.02,
+    1.11, 0.86, 0.96, 0.94, 1.06, 1.07, 0.99, 0.88,
+    # Norge
+    1.10, 1.08, 1.06, 1.11, 1.04, 0.99, 0.99, 0.98,
+    0.92, 0.91, 0.95, 0.96, 1.01, 1.03, 0.92, 0.86
+  ),
+  Region = rep(c("Haugesund", "Norge"), each = 16)
+)
+
+# Lag linjediagram
+ggplot(data_andel, aes(x = År, y = Andel, color = Region)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Andel førstegangskjøpere per år",
+    x = "År",
+    y = "Andel (%)",
+    color = "Region"
+  ) +
+  scale_color_manual(values = c("Haugesund" = "#D55E00", "Norge" = "#0072B2")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title = element_text(size = 12)
+  )
+
+```
+
+```{r}
+# Last inn pakke
+library(ggplot2)
+
+# Lag datasett
+data_alder <- data.frame(
+  År = rep(2008:2023, 2),
+  Alder = c(
+    # Haugesund
+    26.83, 26.86, 27.50, 27.10, 27.31, 26.82, 27.23, 26.73,
+    26.62, 26.64, 27.04, 27.34, 26.64, 27.83, 27.34, 26.99,
+    # Norge
+    28.30, 28.26, 28.26, 28.06, 27.98, 27.91, 27.75, 27.64,
+    27.62, 27.79, 27.78, 27.81, 27.80, 27.86, 28.03, 28.04
+  ),
+  Region = rep(c("Haugesund", "Norge"), each = 16)
+)
+
+# Lag linjediagram
+ggplot(data_alder, aes(x = År, y = Alder, color = Region)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Gjennomsnittsalder for førstegangskjøpere",
+    x = "År",
+    y = "Alder",
+    color = "Region"
+  ) +
+  scale_color_manual(values = c("Haugesund" = "#D55E00", "Norge" = "#0072B2")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title = element_text(size = 12)
+  )
+
+```
+
+```{r}
+# Last inn nødvendige pakker
+library(ggplot2)
+library(dplyr)
+
+# Datasett: Alder og andel for Haugesund og Norge
+data_andel_alder <- data.frame(
+  År = rep(2008:2023, 2),
+  Andel = c(
+    # Haugesund
+    1.61, 1.23, 1.33, 1.21, 1.19, 1.13, 1.19, 1.02,
+    1.11, 0.86, 0.96, 0.94, 1.06, 1.07, 0.99, 0.88,
+    # Norge
+    1.10, 1.08, 1.06, 1.11, 1.04, 0.99, 0.99, 0.98,
+    0.92, 0.91, 0.95, 0.96, 1.01, 1.03, 0.92, 0.86
+  ),
+  Alder = c(
+    # Haugesund
+    26.83, 26.86, 27.50, 27.10, 27.31, 26.82, 27.23, 26.73,
+    26.62, 26.64, 27.04, 27.34, 26.64, 27.83, 27.34, 26.99,
+    # Norge
+    28.30, 28.26, 28.26, 28.06, 27.98, 27.91, 27.75, 27.64,
+    27.62, 27.79, 27.78, 27.81, 27.80, 27.86, 28.03, 28.04
+  ),
+  Region = rep(c("Haugesund", "Norge"), each = 16)
+)
+
+# Plot
+ggplot(data_andel_alder, aes(x = Alder, y = Andel, color = Region)) +
+  geom_point(size = 2.5) +
+  labs(
+    title = "Forhold mellom gjennomsnittsalder og andel førstegangskjøpere: Haugesund vs Norge",
+    x = "Gjennomsnittsalder",
+    y = "Andel (%)"
+  ) +
+  scale_color_manual(values = c("Haugesund" = "orange", "Norge" = "blue")) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 13, face = "plain", hjust = 0.5),
+    legend.title = element_blank(),
+    legend.position = "top"
+  )
+
+```
+
+```{r}
+ggplot(data_andel_alder, aes(x = Alder, y = Andel, color = Region)) +
+  geom_point(shape = 4, size = 2.5) +  # shape = 4 gir "x"
+  labs(
+    title = "Forhold mellom gjennomsnittsalder og andel førstegangskjøpere: Haugesund vs Norge",
+    x = "Gjennomsnittsalder",
+    y = "Andel (%)"
+  ) +
+  scale_color_manual(values = c("Haugesund" = "orange", "Norge" = "blue")) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 13, face = "plain", hjust = 0.5),
+    legend.title = element_blank(),
+    legend.position = "top"
+  )
+
+```
+
+```{r}
+# Først: lag datasettet manuelt
+fh_index <- data.frame(
+  År = 2008:2023,
+  Indeks = c(50.3, 57.4, 60.7, 52.6, 51.1, 50.6, 48.4, 51.6, 50.2, 48.1, 49.5, 58.3, 58.5, 63.1, 62.3, 56.8)
+)
+
+# Last inn ggplot2 om det ikke er lastet
+library(ggplot2)
+
+# Lag linjediagrammet
+ggplot(fh_index, aes(x = År, y = Indeks)) +
+  geom_line(color = "darkblue", size = 1.2) +
+  geom_point(color = "darkblue", size = 2) +
+  labs(
+    title = "Førstehjemindeksen i Haugesund (2008–2023)",
+    x = "År",
+    y = "Indeks (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  scale_y_continuous(limits = c(45, 65))  # Juster etter behov
+
+```

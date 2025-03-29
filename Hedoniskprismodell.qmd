@@ -104,26 +104,28 @@ data$Salgsdato <- NULL
 ###### Setter inn KPI
 
 ```{r}
-kpi_data <- data.frame(
-  År = 2008:2024,
-  KPI = c(88.0, 89.9, 92.1, 93.3, 93.9, 95.9, 97.9, 100.0, 103.6, 105.5, 108.4, 
-          110.8, 112.2, 116.1, 122.8, 129.6, 133.6) 
-)
+kpi_data <- tibble(
+    Salgsår = 2008:2024,
 
-kpi_data$KPI_justert <- (kpi_data$KPI / kpi_data$KPI[kpi_data$År == 2008]) * 100
+    kpi = c(88, 89.9, 92.1, 93.3, 93.9, 95.9, 97.9, 100, 103.6,
+105.5, 108.4, 110.8, 112.2, 116.1, 122.8, 129.6, 133.6)
+
+) |>
+
+    mutate(kpi_basis = kpi[Salgsår == 2008])
 ```
 
 ```{r}
-data <- merge(data, kpi_data, by.x = "Salgsår", by.y = "År", all.x = TRUE)
-
-summary(data$KPI)
-table(is.na(data$KPI))
+data <- data |>
+    left_join(y = kpi_data,
+        join_by("Salgsår")
+    )
 ```
 
 ###### Får realpris
 
 ```{r}
-data$Realpris <- (data$Pris + data$Fellesgjeld) * (100 / data$KPI)
+data$Realpris <- (data$Pris + data$Fellesgjeld) * (data$kpi_basis/ data$kpi)
 ```
 
 ```{r}
@@ -208,24 +210,6 @@ data_clean$har_fellesgjeld <- ifelse(data_clean$Fellesgjeld > 0, 1, 0)
 
 ```
 
-skiller mellom leilighet selveier og leilighet borettslag (**denne koden er ikke kjørt!!**!!)
-
-```{r}
-# Sørg for at Boligtype og Eieform er tekst
-data_clean$Boligtype <- as.character(data_clean$Boligtype)
-data_clean$Eieform <- as.character(data_clean$Eieform)
-
-# Oppdater boligtype: Splitt "Leilighet" i to kategorier
-data_clean$Boligtype[data_clean$Boligtype == "Leilighet" & data_clean$Eieform == "Selveier"] <- "Leilighet_Selveier"
-data_clean$Boligtype[data_clean$Boligtype == "Leilighet" & data_clean$Eieform == "Borettslag"] <- "Leilighet_Borettslag"
-
-# Konverter tilbake til faktor og sett ønsket rekkefølge (rekkehus som referanse)
-data_clean$Boligtype <- factor(data_clean$Boligtype, levels = c("Rekkehus", "Enebolig", "Tomannsbolig", "Leilighet_Selveier", "Leilighet_Borettslag"))
-
-# Sjekk resultatet
-table(data_clean$Boligtype)
-```
-
 #### **Lineær regresjon med Realpris (justert for KPI) som avhengig variabel:**
 
 ```{r}
@@ -252,10 +236,13 @@ model_log <- data_clean |>
   mutate(
     Boligtype = fct(as.character(Boligtype)),
     Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår))
+    Salgsår = fct(as.character(Salgsår)),
+    Leilighet_Selveier = ifelse(Boligtype == "Leilighet" & Eieform == "Selveier", 1, 0),
+        Rekkehus_Selveier = ifelse(Boligtype == "Rekkehus" & Eieform == "Selveier", 1, 0),
+    Tomannsbolig_Selveier = ifelse(Boligtype == "Tomannsbolig" & Eieform == "Selveier", 1, 0)
   ) %>%
   lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Boligtype + Eieform + Salgsår,
+    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Boligtype + Eieform + Leilighet_Selveier + Rekkehus_Selveier + Tomannsbolig_Selveier + Salgsår,
     data = .
     )
 
@@ -275,52 +262,13 @@ ggplot(data_clean, aes(x = Alder, y = log(Realpris))) +
        y = "Log(realpris)")
 ```
 
-Hvilke attributter påvirker boligprisen mest:
-
-```{r}
-
-# Beregner gjennomsnitt for hver grunnkrets
-avg_values <- data_clean %>%
-  group_by(Grunnkrets) %>%
-  summarise(
-    Gjennomsnitt_BRA = mean(BRA, na.rm = TRUE),
-    Gjennomsnitt_Byggeår = mean(Byggeår, na.rm = TRUE),
-    Gjennomsnitt_Fellesgjeld = mean(Fellesgjeld, na.rm = TRUE),
-    Antall_boliger = n()
-  ) %>%
-  arrange(desc(Gjennomsnitt_BRA))  # Sorterer etter største boliger
-
-# Viser resultatet
-print(avg_values)
-
-```
-
-```{r}
-
-```
-
-```{r}
-coeff_df <- as.data.frame(coef(summary(model_log)))
-coeff_df$Variable <- rownames(coeff_df)
-
-# Filtrer kun grunnkretsvariablene
-grunnkrets_effekt <- coeff_df %>%
-  filter(grepl("Grunnkrets", Variable)) %>%
-  arrange(desc(Estimate))  # Sorterer etter høyest effekt
-
-# Viser de 10 dyreste og billigste grunnkretsene
-head(grunnkrets_effekt, 10)  # Topp 10 dyreste
-tail(grunnkrets_effekt, 10)  # Topp 10 billigste
-
-```
-
 #### Heteroskedastisitet
 
 ```{r}
 library(lmtest)
 
 # Sjekker om heteroskedastisitet er til stede
-bptest(model_log2)
+bptest(model_log)
 
 ```
 
@@ -426,56 +374,9 @@ Resultatene kan dermed tolkes med høyere grad av sikkerhet.
 
 Denne koden tester **signifikansen til koeffisientene** i regresjonen din, men **med standardfeil justert for klynger på grunnkretsnivå**.
 
-```{r}
-coeftest(model_log, vcov = vcovCL(model_log, cluster = ~Grunnkrets))
-
-```
-
 forskjell fra den opprinnelige til den nye:
 
-**Justering for heteroskedastisitet og betydningen for resultatene**
-
-For å sikre robuste estimater og pålitelige hypotesetester, ble det gjennomført en Breusch-Pagan-test for heteroskedastisitet.
-Testresultatet (BP = 4770.8, p-verdi \< 2.2e-16) indikerer sterk tilstedeværelse av heteroskedastisitet i modellen, noe som betyr at residualvariasjonen ikke er konstant.
-Dette kan føre til at standardfeilene undervurderes og at p-verdiene blir feilberegnet.
-
-For å korrigere for dette, ble det benyttet **cluster-robuste standardfeil**, der feilvariansen ble justert for grupperingsstrukturen i dataene, nærmere bestemt på grunnkretsnivå.
-Etter denne justeringen ble det observert noen viktige endringer i resultatene:
-
--   **Standardfeilene økte noe**, noe som indikerer at usikkerheten i modellen tidligere var undervurdert.
-
--   **De viktigste forklaringsvariablene, som BRA, Soverom, Byggeår, Tomannsbolig, Selveier og Fellesgjeld, forble statistisk signifikante (p \< 0.001)**, noe som bekrefter deres betydning for boligpriser.
-
--   **BoligtypeLeilighet og BoligtypeRekkehus, som tidligere var signifikante, er ikke lenger det**, noe som kan tyde på at effekten av disse boligtypene var delvis drevet av geografiske faktorer.
-
--   **Effektene av enkelte grunnkretser ble også mindre signifikante etter justeringen**, noe som antyder at geografiske forskjeller har mindre direkte innvirkning på boligpriser enn først antatt, når andre variabler er kontrollert for.
-
-Resultatene etter justeringen gir et mer realistisk bilde av hvilke faktorer som faktisk påvirker boligpriser.
-Ved å bruke cluster-robuste standardfeil sikres mer pålitelige estimater, noe som styrker analysens validitet.
-
 #### BRA og realpris, varierer over tid
-
-```{r}
-#| label: tbl-BRA_Realpris
-#| tbl-cap: Interaksjonsmodell med BRA og Realpris
-library(flextable)
-
-
-model_interaksjon <- data_clean |> 
-  mutate(
-    Boligtype = fct(as.character(Boligtype)),
-    Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår)),
-  )
-
-model_interaksjon <- lm(
-  log(Realpris) ~ BRA * Salgsår + Soverom + Boligtype + Eieform + Alder + I(Alder^2) + Fellesgjeld + Avstand_km, data = data_clean)
-
-summary(model_interaksjon)
-
-model_interaksjon |> as_flextable() |> 
-  line_spacing(space = 0.3)
-```
 
 ##### Deler opp i flere tidsperioder
 
@@ -508,86 +409,19 @@ nrow(data_2020_2024)
 ```{r}
 library(broom)
 
-    model_2008_2013 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom + factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Avstand_km + factor(Boligtype),  data = data_2008_2013)
+    model_2008_2013 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom + factor(Eieform) + har_fellesgjeld + Alder + I(Alder^2) + Avstand_km + factor(Boligtype),  data = data_2008_2013)
     
-    model_2014_2019 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom + factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + 
+    model_2014_2019 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom + factor(Eieform) + har_fellesgjeld + Alder + I(Alder^2) + 
                            Avstand_km + factor(Boligtype),  data = data_2014_2019)
     
-    model_2020_2024 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom +  factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Avstand_km + factor(Boligtype),  data = data_2020_2024)
+    model_2020_2024 <- lm(log(Realpris) ~ BRA + factor(Salgsår) + Soverom +  factor(Eieform) + har_fellesgjeld + Alder + I(Alder^2) + Avstand_km + factor(Boligtype),  data = data_2020_2024)
     
 summary(model_2008_2013)
 summary(model_2014_2019)
 summary(model_2020_2024)
 ```
 
-**Tolkning av hver periode**
-
-**2008-2013: Tidlig periode med vekst**
-
--   Boligstørrelse (BRA): Signifikant og positiv effekt på boligpriser, med en koeffisient på 0.0027.
-    Det betyr at en 1 m² økning i boligstørrelse øker prisen med omtrent 0.27 %.
-
--   Soverom: En ekstra soverom øker boligprisen med 5 %.
-
--   Alder og kvadrat av alder: Boliger mister verdi med alder, men aldringseffekten avtar for svært gamle boliger.
-
--   Eieform: Borettslagsboliger har 4.3 % lavere pris enn selveierboliger.
-
--   Boligtype: Eneboliger er 14.9 % dyrere enn leiligheter, rekkehus 4.99 % dyrere, og tomannsboliger 3.49 % dyrere.
-
--   Tidsfaktorer: Boligprisene økte betydelig i 2011, 2012 og 2013, særlig 2012 og 2013 med sterke positive effekter.
-
--   Lokale effekter: Flere grunnkretser hadde signifikant påvirkning, bl.a.
-    Bleikemyr (-15.8%) og Dyrskar (-30.5%) som hadde negativ sammenheng, mens Hasseløy (+16.1%) og Ramsdalen (+30.4%) hadde høyere priser.
-
-🔹 Oppsummering for perioden: Boligmarkedet viser økende priser mot slutten av perioden, med spesielt sterk vekst i 2012-2013.
-Størrelse, soverom og eieform er viktige prisdrivere.
-
-**2014-2019: Stagnering og svak nedgang**
-
--   Boligstørrelse (BRA): Fortsatt positiv effekt, men litt lavere koeffisient enn i forrige periode (0.00248).
-
--   Soverom: Sterkere effekt enn før (8.37 % prisøkning per ekstra soverom).
-
--   Alder og kvadrat av alder: Fortsatt en negativ effekt av alder, men aldringseffekten avtar gradvis.
-
--   Eieform: Borettslagsboliger har 7.25 % lavere pris enn selveierboliger (litt sterkere effekt enn i 2008-2013)
-
--   Boligtype: Eneboliger er nå 16.7 % dyrere enn leiligheter, rekkehus har økt i verdi (8.72 % høyere), mens tomannsboliger har en usikker effekt (ikke signifikant).
-
--   Tidsfaktorer: Prisene begynner å synke i 2018 og 2019, spesielt 2019 med en 5.75 % lavere pris enn 2014.
-
--   Lokale effekter: Mange grunnkretser har ikke signifikante effekter, men noen områder ser negative effekter (Hagland -39.5%).
-
--   🔹 Oppsummering for perioden: Markedet ser ut til å flate ut og priser synker i 2018-2019.
-    Soverom blir viktigere, og borettslagsboliger faller relativt mer i pris.
-
-**2020-2024: Pandemieffekter og boligprisvekst**
-
--   Boligstørrelse (BRA): Større effekt enn før, koeffisient 0.00304, noe som betyr at boligstørrelse nå forklarer mer av prisvariasjonen.
-
--   Soverom: Fortsatt viktig, men litt svakere effekt enn i 2014-2019 (7.45 % prisøkning).
-
--   Alder og kvadrat av alder: Fortsatt en sterk negativ sammenheng, med aldringseffekten avtagende.
-
--   Eieform: Borettslagsboliger har nå 9.73 % lavere pris enn selveierboliger (mer enn tidligere perioder).
-
--   Boligtype: Eneboliger er fortsatt dyrere (13.49 % høyere enn leiligheter), rekkehus har 8.77 % høyere pris, men tomannsboliger har nå ingen signifikant effekt.
-
--   Tidsfaktorer: 2020-2024 viser en tydelig prisvekst over årene, med særlig sterk vekst i 2023 og 2024 (9.16 % økning i 2024).
-
--   Lokale effekter: Flere grunnkretser får signifikante effekter.
-    Mange områder som ikke hadde signifikante sammenhenger tidligere, har nå betydelig høyere priser.
-    Sentrum 1 (+75.1%), Ramsdalen (+62.4%), og Maritime Skole (+50.8%) har blant de sterkeste positive effektene
-
-🔹 Oppsummering for perioden: Boligprisene øker betydelig, spesielt etter 2022.
-Boligstørrelse og beliggenhet får sterkere betydning, og forskjellene mellom boligtypene blir mindre.
-
-![](images/clipboard-3390416210.png){width="457"}
-
-![](images/clipboard-2496469599.png)
-
-### Konfidensintervall for hver periode: tror dette er feil
+Konfidensintervall for hver periode: tror dette er feil
 
 ```{r}
 confint(model_2008_2013, level = 0.95)
@@ -596,133 +430,45 @@ confint(model_2020_2024, level = 0.95)
 
 ```
 
-Resultat:
-
-![](images/clipboard-1659762222.png)
-
-![](images/clipboard-1636149335.png)
-
-##### ![](images/clipboard-2808522655.png)
-
-![](images/clipboard-2118994738.png)
-
-![](images/clipboard-3358252361.png)
-
-![](images/clipboard-1231538328.png)
-
-![](images/clipboard-1464190563.png)
-
-![](images/clipboard-3822603310.png)
-
-```{r}
-# Lagre konfidensintervaller for hver periode
-ci_2008_2013 <- as.data.frame(confint(model_2008_2013, level = 0.95))
-ci_2014_2019 <- as.data.frame(confint(model_2014_2019, level = 0.95))
-ci_2020_2024 <- as.data.frame(confint(model_2020_2024, level = 0.95))
-
-# Legg til en kolonne med variabelnavn
-ci_2008_2013$Variable <- rownames(ci_2008_2013)
-ci_2014_2019$Variable <- rownames(ci_2014_2019)
-ci_2020_2024$Variable <- rownames(ci_2020_2024)
-
-# Slå sammen dataene basert på variabelnavn for å sikre at vi sammenligner samme koeffisienter
-library(dplyr)
-
-ci_table <- full_join(ci_2008_2013, ci_2014_2019, by = "Variable", suffix = c("_2008_2013", "_2014_2019"))
-ci_table <- full_join(ci_table, ci_2020_2024, by = "Variable", suffix = c("", "_2020_2024"))
-
-# Gi kolonnene mer forståelige navn
-colnames(ci_table) <- c("Variable", "CI_2008_2013_Low", "CI_2008_2013_High",
-                        "CI_2014_2019_Low", "CI_2014_2019_High",
-                        "CI_2020_2024_Low", "CI_2020_2024_High")
-
-# Vis tabellen
-print(ci_table)
-
-```
-
-```{r}
-# Sammenligne konfidensintervaller for BRA
-ci_data <- data.frame(
-  Period = c("2008-2013", "2014-2019", "2020-2024"),
-  Low = c(ci_2008_2013["BRA", 1], ci_2014_2019["BRA", 1], ci_2020_2024["BRA", 1]),
-  High = c(ci_2008_2013["BRA", 2], ci_2014_2019["BRA", 2], ci_2020_2024["BRA", 2])
-)
-
-print(ci_data)
-
-```
-
-2008-2019 overlapper og viser seg stabil, men 2020-2024 viker fra
-
-```{r}
-# Sammenligne konfidensintervaller for Soverom
-ci_data <- data.frame(
-  Period = c("2008-2013", "2014-2019", "2020-2024"),
-  Low = c(ci_2008_2013["Soverom", 1], ci_2014_2019["Soverom", 1], ci_2020_2024["Soverom", 1]),
-  High = c(ci_2008_2013["Soverom", 2], ci_2014_2019["Soverom", 2], ci_2020_2024["Soverom", 2])
-)
-
-print(ci_data)
-```
-
-Stor endring fra 2008-2019 ingen overlapp, liten overlapp fra 2014-2024, relativt stabil.
-Soverom har ikke en stabil effekt over tid siden vi ser en signifikant økning i 2014-2019 og en liten nedgang etterpå.
-
-```{r}
-# Sammenligne konfidensintervaller for Alder
-ci_data <- data.frame(
-  Period = c("2008-2013", "2014-2019", "2020-2024"),
-  Low = c(ci_2008_2013["Alder", 1], ci_2014_2019["Alder", 1], ci_2020_2024["Alder", 1]),
-  High = c(ci_2008_2013["Alder", 2], ci_2014_2019["Alder", 2], ci_2020_2024["Alder", 2])
-)
-
-print(ci_data)
-```
-
-Ingen overlatt fra 2008-2019.
-men overlapp fra 2014-2024.
-Alder på boligen hadde en svakere negativ effekt før 2014, men fra 2014 og utover ble det en tydeligere reduksjon i verdi for eldre boliger.
-
-Eieform:
-
-```{r}
-# Sammenligne konfidensintervaller for Eieform
-ci_data_eieform <- data.frame(
-  Period = c("2008-2013", "2014-2019", "2020-2024"),
-  Low = c(ci_2008_2013["factor(Eieform)Borettslag", 1], 
-          ci_2014_2019["factor(Eieform)Borettslag", 1], 
-          ci_2020_2024["factor(Eieform)Borettslag", 1]),
-  High = c(ci_2008_2013["factor(Eieform)Borettslag", 2], 
-           ci_2014_2019["factor(Eieform)Borettslag", 2], 
-           ci_2020_2024["factor(Eieform)Borettslag", 2])
-)
-
-print(ci_data_eieform)
-
-```
-
 ### Leiligheter som egen regresjon, for hver periode
 
 ```{r}
-# Log-transformert regresjon
-#| label: tbl-logregleili
-#| tbl-cap: Regresjonsmodell leiligheter
-model_log_leil <- data_leilighet |> 
+data_leilighet <- data_clean %>%
+  filter(Boligtype == "Leilighet") %>%
+  mutate(
+    Boligtype = as.factor(Boligtype),
+    Eieform = as.factor(Eieform),
+    Salgsår = as.factor(Salgsår)
+  )
+
+```
+
+```{r}
+# Lag datasett for kun leiligheter
+leiligheter <- data_clean %>%
+  filter(Boligtype == "Leilighet")
+
+# Kjør regresjonsmodell for leiligheter
+model_log_leil <- leiligheter %>%
   mutate(
     Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår)),
-    Grunnkrets = fct(as.character(Grunnkrets))
+    Salgsår = fct(as.character(Salgsår))
   ) %>%
   lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Eieform + Salgsår,
+    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) +
+      har_fellesgjeld + Avstand_km + Eieform + Salgsår,
     data = .
-    )
+  )
 
+# Oppsummer resultatet
 summary(model_log_leil)
 
-model_log_leil |>  as_flextable() |> 
-line_spacing(space = 0.3)
+# Presenter modellen som flextable
+model_log_leil |> 
+  as_flextable() |> 
+  line_spacing(space = 0.3)
+
+
 ```
 
 ```{r}
@@ -730,7 +476,7 @@ line_spacing(space = 0.3)
 leiligheter <- data_clean %>% filter(Boligtype == "Leilighet")
 
 # Definer regresjonsmodellen (du kan justere den om nødvendig)
-regresjonsformel <- Realpris ~ BRA + Soverom + factor(Salgsår) + factor(Eieform) + Alder + I(Alder^2) + Avstand_km
+regresjonsformel <- Realpris ~ BRA + Soverom + har_fellesgjeld + factor(Salgsår) + factor(Eieform) + Alder + I(Alder^2) + Avstand_km
 
 # Kjør regresjoner for hver periode
 model_2008_2013 <- lm(regresjonsformel, data = leiligheter %>% filter(Salgsår >= 2008 & Salgsår <= 2013))
@@ -847,35 +593,21 @@ confint(model_2020_2024, level = 0.95)
 
 ![](images/clipboard-611890696.png)
 
-### Log regresjon med Realpris som avhengig og avstand_km som forklaring
-
-```{r}
-model_avstand <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + Byggeår + 
-                     factor(Boligtype) + factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
-                     data = data_clean)
-
-summary(model_avstand)
-```
-
-resultat:
-
 Effekten er **ikke statistisk signifikant** (p-verdi = 0.1514 \> 0.05), så vi **kan ikke konkludere med at avstand systematisk påvirker boligprisene i Haugesund.**
 
+### ROBUST ANALYSE basert på boligtype
+
 ```{r}
-model_leilighet <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + Byggeår + 
-                       factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
+model_leilighet <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + factor(Eieform) + Alder + I(Alder^2) + har_fellesgjeld, 
                        data = subset(data_clean, Boligtype == "Leilighet"))
 
-model_enebolig <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + Byggeår + 
-                      factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
+model_enebolig <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + factor(Eieform) + Alder + I(Alder^2) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Enebolig"))
 
-model_rekkehus <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + Byggeår + 
-                      factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
+model_rekkehus <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + factor(Eieform) + Alder + I(Alder^2) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Rekkehus"))
 
-model_tomanns <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + Byggeår + 
-                      factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
+model_tomanns <- lm(log(Realpris) ~ Avstand_km + BRA + Soverom + factor(Eieform) + Alder + I(Alder^2) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Tomannsbolig"))
 
 # Vise resultater
@@ -897,15 +629,6 @@ For tomannsboliger er effekten nær null, noe som kan tyde på at avstand til se
 Sammenhengen er sterkest for leiligheter, der en økning i avstand til sentrum gir en tydelig prisreduksjon.
 Gjeldene for førstegangskjøpere
 
-```{r}
-model_avstand_tid <- lm(log(Realpris) ~ Avstand_km * factor(Salgsår) + BRA + Soverom + Byggeår + 
-                         factor(Boligtype) + factor(Eieform) + factor(Grunnkrets) + Alder + I(Alder^2) + Fellesgjeld, 
-                         data = data_clean)
-
-summary(model_avstand_tid)
-
-```
-
 Har effekten endret seg gjennom årene, 2008-2024?
 JA
 
@@ -916,20 +639,6 @@ JA
 
 -   **2020-2024:** Effekten av avstand blir gradvis sterkere, spesielt fra 2022 til 2024, der sammenhengen er signifikant og positiv.
 
-<!-- -->
-
--   **Tidligere (før 2016):** Avstand til sentrum hadde liten eller ingen effekt på boligprisene.
-
--   **Fra 2016 og utover:** Vi ser en økende positiv effekt, noe som betyr at boligprisene utenfor sentrum har steget mer relativt til sentrum.
-
--   **Sterkest effekt etter 2020:** Dette kan indikere at pandemien, fjernarbeid eller økt boligetterspørsel i forsteder har gjort avstand til sentrum mindre viktig i nyere år.
-
--   Vi ser at årene med sterkest signifikante sammenhenger (2020-2024) faller sammen med en periode med høy prisvekst nasjonalt.
-
-<!-- -->
-
--   Dette kan bety at høy boligprisvekst har ført til at områder utenfor sentrum har blitt relativt mer attraktive.
-
 ### Robust analyse
 
 ```{r}
@@ -939,8 +648,7 @@ library(flextable)
 data_leilighet <- subset(data_clean, Boligtype == "Leilighet") |> 
   mutate(
     Salgsår = fct(as.character(Salgsår)),
-    Eieform = fct(as.character(Eieform)),
-    Grunnkrets = fct(as.character(Grunnkrets))
+    Eieform = fct(as.character(Eieform))
   )
 
 model_leilighet <- lm(
@@ -948,7 +656,6 @@ model_leilighet <- lm(
 
 model_leilighet |> as_flextable() |> 
   line_spacing(space = 0.3)
-
 
 ```
 
@@ -1013,19 +720,18 @@ model_tomanns |> as_flextable() |>
 
 ```{r}
 # Modell for leiligheter
-model_leilighet <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + Fellesgjeld, 
+model_leilighet <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Leilighet"))
 
 # Modell for eneboliger
-model_enebolig <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + Fellesgjeld, 
+model_enebolig <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Enebolig"))
 
 # Modell for rekkehus
-model_rekkehus <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + Fellesgjeld, 
+model_rekkehus <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + har_fellesgjeld, 
                       data = subset(data_clean, Boligtype == "Rekkehus"))
 
-model_tomannsbolig <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + 
-Fellesgjeld, 
+model_tomannsbolig <- lm(log(Realpris) ~ BRA + Soverom + Eieform + Alder + factor(Salgsår) + har_fellesgjeld, 
                          data = subset(data_clean, Boligtype == "Tomannsbolig"))
 
 # Se resultatene
@@ -1193,319 +899,75 @@ ci_lister[["Tomannsbolig"]]
 
 ```
 
-### Ser på Avstand_km
-
-Vanlig log: alt er likt utenom at grunnkrets er ekslkludert
-
-```{r}
-# Log-transformert regresjon
-#| label: tbl-logreg2
-#| tbl-cap: Regresjonsmodell uten grunnkretser
-model_log2 <- data_clean |> 
-  mutate(
-    Boligtype = fct(as.character(Boligtype)),
-    Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår)),
-  ) %>%
-  lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + Fellesgjeld + Avstand_km + Boligtype + Eieform + Salgsår,
-    data = .
-    )
-
-summary(model_log2)
-
-model_log2 |>  as_flextable() |> 
-line_spacing(space = 0.3)
-```
-
-Resultat: Når avstanden til sentrum øker med **1 km**, reduseres den log-transformerte realprisen med **3.44 %**.
-Siden modellen er log-lineær, betyr dette at **boligprisen faller med ca. 3.44 % per km lengre unna sentrum** (ceteris paribus).
-Dette viser at avstand til sentrum er en viktig forklaringsvariabel for boligpriser.
-
-### Regresjon kun med leiligheter og uten grunnkrets:
-
-```{r}
-# Log-transformert regresjon
-#| label: tbl-logregleil
-#| tbl-cap: Regresjonsmodell med leiligheter
-model_leilighet1 <- data_leilighet |> 
-  mutate(
-    Eieform = fct(as.character(Eieform)),
-    Salgsår = fct(as.character(Salgsår)),
-  ) %>%
-  lm(
-    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + Fellesgjeld + Avstand_km + Eieform + Salgsår,data = .
-    )
-
-summary(model_leilighet1)
-
-model_leilighet1 |>  as_flextable() |> 
-line_spacing(space = 0.3)
-```
-
-resultat:![](images/clipboard-1695461193.png)
-
-![](images/clipboard-1048695332.png)
-
 ### Predikere priser
-
-Alle boliger, 2008-2024
-
-```{r}
-# Filtrer datasetet for alle boligtyper (fjerner prisgrensen)
-boliger_uten_prisgrense <- data_clean %>%
-  select(Realpris, BRA, Boligtype, Soverom, Alder, Eieform, Fellesgjeld, Avstand_km)
-
-# Vis gjennomsnittlige verdier for relevante variabler
-summary(boliger_uten_prisgrense)
-```
-
-```{r}
-# Sett inn koeffisientene fra din modell
-intercept <- 14.27  # Intercept fra modellen
-beta_BRA <- 0.002906  # Koeffisient for BRA
-beta_Soverom <- 0.06804  # Koeffisient for soverom
-beta_Alder <- -0.01045  # Koeffisient for alder
-beta_Alder2 <- 0.00004478  # Koeffisient for alder^2
-beta_Avstand <- -0.03438  # Koeffisient for avstand til sentrum
-beta_Fellesgjeld <- 0.0000001265  # Koeffisient for fellesgjeld
-beta_Eieform <- -0.1171  # Effekt av borettslag
-beta_Enebolig <- 0.1021  # Effekt av enebolig
-beta_Rekkehus <- 0.03643  # Effekt av rekkehus
-beta_Tomannsbolig <- -0.02004  # Effekt av tomannsbolig
-
-# Sett inn gjennomsnittsverdier fra hele datasettet (ingen prisgrense)
-BRA <- 127  # Gjennomsnittlig BRA for alle boligtyper
-Soverom <- 2.751  # Gjennomsnittlig antall soverom
-Alder <- 43.05  # Gjennomsnittlig alder
-Alder2 <- Alder^2
-Avstand_km <- 2.634  # Gjennomsnittlig avstand til sentrum
-Fellesgjeld <- 75408  # Gjennomsnittlig fellesgjeld (kun for borettslag)
-
-# Beregn log-pris for hver boligtype
-log_pris_leilighet <- intercept +
-  beta_BRA * BRA +
-  beta_Soverom * Soverom +
-  beta_Alder * Alder +
-  beta_Alder2 * Alder2 +
-  beta_Avstand * Avstand_km
-
-log_pris_enebolig <- log_pris_leilighet + beta_Enebolig
-log_pris_rekkehus <- log_pris_leilighet + beta_Rekkehus
-log_pris_tomannsbolig <- log_pris_leilighet + beta_Tomannsbolig
-
-# Borettslag-justering (kun for leiligheter)
-log_pris_borettslag <- log_pris_leilighet + beta_Eieform + beta_Fellesgjeld * Fellesgjeld
-
-# Konverter log-priser til faktisk pris
-pred_pris_leilighet <- exp(log_pris_leilighet)
-pred_pris_enebolig <- exp(log_pris_enebolig)
-pred_pris_rekkehus <- exp(log_pris_rekkehus)
-pred_pris_tomannsbolig <- exp(log_pris_tomannsbolig)
-pred_pris_borettslag <- exp(log_pris_borettslag)
-
-# Print resultater
-cat("Predikert pris for leilighet (selveier):", round(pred_pris_leilighet), "NOK\n")
-cat("Predikert pris for leilighet (borettslag):", round(pred_pris_borettslag), "NOK\n")
-cat("Predikert pris for enebolig:", round(pred_pris_enebolig), "NOK\n")
-cat("Predikert pris for rekkehus:", round(pred_pris_rekkehus), "NOK\n")
-cat("Predikert pris for tomannsbolig:", round(pred_pris_tomannsbolig), "NOK\n")
-
-```
-
-Kun leilighet i 2020:
-
-```{r}
-# Sett inn koeffisientene fra din modell
-intercept <- 14.27  # Intercept fra modellen
-beta_BRA <- 0.002906  # Koeffisient for BRA
-beta_Soverom <- 0.06804  # Koeffisient for soverom
-beta_Alder <- -0.01045  # Koeffisient for alder
-beta_Alder2 <- 0.00004478  # Koeffisient for alder^2
-beta_Avstand <- -0.03438  # Koeffisient for avstand til sentrum
-beta_Fellesgjeld <- 0.0000001265  # Koeffisient for fellesgjeld
-beta_Eieform <- -0.1171  # Effekt av borettslag
-beta_Salgsår_2020 <- 0.07405  # Effekt av salgsår 2020
-
-# Sett inn gjennomsnittsverdier for leiligheter i 2020
-BRA <- 83  # Gjennomsnittlig BRA for leiligheter i 2020
-Soverom <- 2  # Gjennomsnittlig antall soverom for leiligheter i 2020
-Alder <- 47  # Gjennomsnittlig alder på boligen i 2020
-Alder2 <- Alder^2  # Alder i kvadrat
-Avstand_km <- 2.25  # Gjennomsnittlig avstand til sentrum
-Fellesgjeld <- 82044  # Gjennomsnittlig fellesgjeld
-
-# Beregn log-pris for leilighet (selveier) i 2020
-log_pris_leilighet_2020 <- intercept +
-  beta_BRA * BRA +
-  beta_Soverom * Soverom +
-  beta_Alder * Alder +
-  beta_Alder2 * Alder2 +
-  beta_Avstand * Avstand_km +
-  beta_Salgsår_2020  # Inkluderer effekten av salgsår 2020
-
-# Beregn log-pris for leilighet (borettslag) i 2020
-log_pris_borettslag_2020 <- log_pris_leilighet_2020 + beta_Eieform + beta_Fellesgjeld * Fellesgjeld
-
-# Konverter log-priser til faktisk pris
-pred_pris_leilighet_2020 <- exp(log_pris_leilighet_2020)
-pred_pris_borettslag_2020 <- exp(log_pris_borettslag_2020)
-
-# Print resultater
-cat("Predikert pris for leilighet (selveier) i 2020:", round(pred_pris_leilighet_2020), "NOK\n")
-cat("Predikert pris for leilighet (borettslag) i 2020:", round(pred_pris_borettslag_2020), "NOK\n")
-
-```
-
-Kun leilighet i 2024:
-
-```{r}
-# Sett inn koeffisientene fra din modell
-intercept <- 14.27  # Intercept fra modellen
-beta_BRA <- 0.002906  # Koeffisient for BRA
-beta_Soverom <- 0.06804  # Koeffisient for soverom
-beta_Alder <- -0.01045  # Koeffisient for alder
-beta_Alder2 <- 0.00004478  # Koeffisient for alder^2
-beta_Avstand <- -0.03438  # Koeffisient for avstand til sentrum
-beta_Fellesgjeld <- 0.0000001265  # Koeffisient for fellesgjeld
-beta_Eieform <- -0.1171  # Effekt av borettslag
-beta_Salgsår_2024 <- 0.162  # Effekt av salgsår 2024
-
-# Sett inn gjennomsnittsverdier fra ditt datasett for leiligheter i 2024
-BRA <- 83  # Gjennomsnittlig BRA for leiligheter i 2024
-Soverom <- 2  # Gjennomsnittlig antall soverom for leiligheter i 2024
-Alder <- 47  # Gjennomsnittlig alder på boligen i 2024
-Alder2 <- Alder^2  # Alder i kvadrat
-Avstand_km <- 2.25  # Gjennomsnittlig avstand til sentrum
-Fellesgjeld <- 82044  # Gjennomsnittlig fellesgjeld
-
-# Beregn log-pris for leilighet (selveier) i 2024
-log_pris_leilighet_2024 <- intercept +
-  beta_BRA * BRA +
-  beta_Soverom * Soverom +
-  beta_Alder * Alder +
-  beta_Alder2 * Alder2 +
-  beta_Avstand * Avstand_km +
-  beta_Salgsår_2024  # Inkluderer effekten av salgsår 2024
-
-# Beregn log-pris for leilighet (borettslag) i 2024
-log_pris_borettslag_2024 <- log_pris_leilighet_2024 + beta_Eieform + beta_Fellesgjeld * Fellesgjeld
-
-# Konverter log-priser til faktisk pris
-pred_pris_leilighet_2024 <- exp(log_pris_leilighet_2024)
-pred_pris_borettslag_2024 <- exp(log_pris_borettslag_2024)
-
-# Print resultater
-cat("Predikert pris for leilighet (selveier) i 2024:", round(pred_pris_leilighet_2024), "NOK\n")
-cat("Predikert pris for leilighet (borettslag) i 2024:", round(pred_pris_borettslag_2024), "NOK\n")
-
-
-```
-
-```{r}
-# Filtrer datasetet for leiligheter og grupper etter eieform
-leilighet_stats <- data %>%
-  filter(Boligtype == "Leilighet") %>%
-  group_by(Eieform) %>%
-  summarise(
-    Gjennomsnittspris = mean(Realpris, na.rm = TRUE),
-    Medianpris = median(Realpris, na.rm = TRUE),
-    Minpris = min(Realpris, na.rm = TRUE),
-    Makspris = max(Realpris, na.rm = TRUE),
-    Antall = n()  # Valgfritt: Antall observasjoner per kategori
-  )
-
-# Lag en pen tabell med flextable
-leilighet_tabell <- flextable(leilighet_stats) %>%
-  set_header_labels(
-    Eieform = "Eieform",
-    Gjennomsnittspris = "Gjennomsnittspris",
-    Medianpris = "Medianpris",
-    Minpris = "Minste pris",
-    Makspris = "Høyeste pris",
-    Antall = "Antall boliger"
-  ) %>%
-  colformat_num(j = c("Gjennomsnittspris", "Medianpris", "Minpris", "Makspris"), big.mark = " ", digits = 0) %>% 
-  autofit()
-
-# Vis tabellen
-leilighet_tabell
-
-
-```
-
-```{r}
-# Filtrer datasetet for leiligheter i 2020 og 2024
-leiligheter_2020_2024 <- data_clean %>%
-  filter(Boligtype == "Leilighet" & Salgsår %in% c(2020, 2024))
-
-# Beregn gjennomsnitt og medianpris for selveier og borettslag i 2020 og 2024
-pris_statistikk <- leiligheter_2020_2024 %>%
-  group_by(Eieform, Salgsår) %>%
-  summarise(
-    Gjennomsnittspris = mean(Realpris, na.rm = TRUE),
-    Medianpris = median(Realpris, na.rm = TRUE),
-    Minste_pris = min(Realpris, na.rm = TRUE),
-    Høyeste_pris = max(Realpris, na.rm = TRUE),
-    Antall_boliger = n()
-  )
-
-# Vis resultatene i en fin tabell
-pris_statistikk %>%
-  kable(digits = 0, format = "html", caption = "Prisstatistikk for Leiligheter (2020 & 2024)") %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
-
-```
 
 **annen måte å predikere priser: OBS alle boligtyper**
 
 ```{r}
-# Funksjon for å predikere for én boligtype
+sigma2 <- mean(residuals(model_log)^2)
+```
+
+```{r}
+library(dplyr)
+
 prediker_boligtype <- function(data, boligtype_navn) {
-  data_bolig <- data %>%
+  data_bolig <- data_clean %>%
     filter(Boligtype == boligtype_navn)
-
-  prediksjoner <- predict(model_fit, new_data = data_bolig)
-
+  
+  prediksjoner <- predict(model_log, newdata = data_bolig)
+  
   data_bolig <- data_bolig %>%
-    mutate(Predikert_logpris = prediksjoner$.pred) %>%
-    mutate(Predikert_Pris = exp(Predikert_logpris))
-
+    mutate(
+      Predikert_logpris = prediksjoner,
+      Predikert_Pris = exp(Predikert_logpris),  # uten korreksjon
+      Predikert_Pris_Adj = exp(Predikert_logpris) * exp(sigma2 / 2)  # med korreksjon
+    )
+  
   return(data_bolig)
 }
 
 ```
 
 ```{r}
-data_clean$Salgsår <- as.numeric(as.character(data_clean$Salgsår))
+# Liste over boligtypene i datasettet
+data_clean$Salgsår <- as.factor(data_clean$Salgsår)
 
-# Liste over boligtypene du har i datasettet
 boligtyper <- c("Leilighet", "Enebolig", "Rekkehus", "Tomannsbolig")
 
-# Bruk funksjonen for å lage ett datasett med prediksjoner for alle
+# Kjør prediksjon for hver boligtype og bind sammen
 data_predikert <- lapply(boligtyper, function(bt) prediker_boligtype(data_clean, bt)) %>%
   bind_rows()
 
 ```
 
 ```{r}
-library(dplyr)
-library(flextable)
-
 summary_stats <- data_predikert %>%
   group_by(Boligtype) %>%
   summarise(
     Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
+    Gjennomsnitt_Predikert_Adj = mean(Predikert_Pris_Adj, na.rm = TRUE),
     Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
     Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
+    Median_Predikert_Adj = median(Predikert_Pris_Adj, na.rm = TRUE),
     Median_Faktisk = median(Realpris, na.rm = TRUE)
   )
 
-# Lag en flextable
+```
+
+OBS!
+den første koden nå viser med predikert og justert mens den nr 2 viser kun justert.
+
+```{r}
+library(flextable)
+
 tbl_summary <- summary_stats %>%
   flextable() %>%
-  colformat_num(j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Faktisk", 
-                      "Median_Predikert", "Median_Faktisk"), digits = 0, big.mark = " ") %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Predikert_Adj",
+          "Gjennomsnitt_Faktisk", "Median_Predikert",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
+  ) %>%
   set_caption("Sammenligning av predikert og faktisk boligpris per boligtype") %>%
   autofit()
 
@@ -1513,252 +975,415 @@ tbl_summary
 
 ```
 
-**Kun leiligheter:**
-
 ```{r}
-data_leilighet <- subset(data_clean, Boligtype == "Leilighet")
-
-# Lag en ny variabel med log-transformert pris (kun for trening)
-data_leilighet <- data_leilighet %>%
-  mutate(LogRealpris = log(Realpris))
-
-# Sett opp recipe uten step_log() for Realpris
-recipe_spec <- recipe(LogRealpris ~ BRA + Soverom + Eieform + Alder + Fellesgjeld + Avstand_km + Salgsår, 
-                      data = data_leilighet) %>%
-  step_mutate(Salgsår = as.factor(Salgsår)) %>%  # Gjør salgsår til faktor
-  step_mutate(Eieform = as.factor(Eieform)) %>%
-  step_poly(Alder, degree = 2)  # Alder^2
-
-# Sett opp modellen
-model_spec <- linear_reg() %>%
-  set_engine("lm")
-
-# Sett opp workflow
-workflow_spec <- workflow() %>%
-  add_recipe(recipe_spec) %>%
-  add_model(model_spec)
-
-# Tren modellen
-model_fit <- workflow_spec %>%
-  fit(data = data_leilighet)
-
-# **Lag testdatasett uten LogRealpris**
-new_data <- data_leilighet %>%
-  select(-LogRealpris)  # Fjerner LogRealpris fordi vi ikke har det i nye observasjoner
-
-# Prediker priser
-prediksjoner <- predict(model_fit, new_data = new_data) %>%
-  bind_cols(new_data) %>%
-  mutate(Predikert_Pris = exp(.pred))  # Konverter tilbake fra log-verdi
-
-# Vis resultatene
-print(prediksjoner)
-
-```
-
-Predikere boligpriser
-
-```{r}
-prediksjoner <- predict(model_fit, new_data = data_leilighet)
-
-data_leilighet <- data_leilighet %>%
-  mutate(Predikert_logpris = prediksjoner$.pred)
-
-data_leilighet <- data_leilighet %>%
-  mutate(Predikert_Pris = exp(Predikert_logpris))
-
-```
-
-sammenlikne med faktiske priser
-
-```{r}
-# Sammenlign gjennomsnittlig predikert pris vs faktisk pris
-summary_stats <- data_leilighet %>%
-  summarise(
-    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
-    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
-    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
-    Median_Faktisk = median(Realpris, na.rm = TRUE)
-  )
-
-# Konverter til flextable
-tbl_summary <- summary_stats %>%
-  flextable() %>%
-  colformat_num(j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Faktisk", 
-                      "Median_Predikert", "Median_Faktisk"), digits = 2, big.mark = " ") %>%
-  set_caption("Sammenligning av predikert og faktisk boligpris") %>%
-  autofit()
-
-# Vis tabellen
-tbl_summary
-
-```
-
-```{r}
-data_leilighet <- subset(data_clean, Boligtype == "Leilighet")
-
-```
-
-```{r}
-# Sammenlign gjennomsnittlig predikert pris vs faktisk pris for selveier og borettslag
-summary_stats <- data_leilighet %>%
-  group_by(Eieform) %>%  # 👈 Gruppér etter Eieform!
-  summarise(
-    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
-    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
-    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
-    Median_Faktisk = median(Realpris, na.rm = TRUE)
-  )
-
-# Konverter til flextable
-tbl_summary <- summary_stats %>%
+# Ny tabell med bare justerte og faktiske verdier
+tbl_summary_adj <- summary_stats %>%
+  select(Boligtype, 
+         Gjennomsnitt_Predikert_Adj, 
+         Gjennomsnitt_Faktisk, 
+         Median_Predikert_Adj, 
+         Median_Faktisk) %>%
   flextable() %>%
   colformat_num(
-    j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Faktisk", 
-          "Median_Predikert", "Median_Faktisk"),
-    digits = 0,
-    big.mark = " "
+    j = c("Gjennomsnitt_Predikert_Adj", "Gjennomsnitt_Faktisk",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
   ) %>%
-  set_caption("Sammenligning av predikert og faktisk boligpris for selveier og borettslag") %>%
+  set_caption("Sammenligning av justert predikert og faktisk boligpris per boligtype") %>%
   autofit()
 
-# Vis tabellen
-tbl_summary
+tbl_summary_adj
 
 ```
 
-Skiller mellom 1 soverom og 2 på leiligheter
+Leiligheter:
 
 ```{r}
-library(dplyr)
+# Filtrer kun leiligheter
+df_leil <- data_clean %>%
+  filter(Boligtype == "Leilighet")
+```
 
-# Funksjon som lager testdata og predikerer pris
-prediker_leilighet_sov <- function(eieform_navn) {
-  ny_data <- tibble(
-    BRA = mean(data_clean$BRA, na.rm = TRUE),
-    Soverom = c(1, 2),
-    Alder = mean(data_clean$Alder, na.rm = TRUE),
-    Avstand_km = mean(data_clean$Avstand_km, na.rm = TRUE),
-    har_fellesgjeld = 0,
-    Fellesgjeld = 0,
-    Boligtype = "Leilighet",
-    Eieform = eieform_navn,
-    Salgsår = 2020
-  )
+```{r}
+sigma3 <- mean(residuals(model_log_leil)^2)
+```
 
-  ny_data$`I(Alder^2)` <- ny_data$Alder^2
-
-  pred <- predict(model_fit, new_data = ny_data)
-  ny_data$Pris_pred <- as.numeric(exp(pred$.pred))
-
-  return(ny_data %>% select(Eieform, Soverom, Pris_pred))
+```{r}
+# Funksjon for prediksjon per eieform
+prediker_eieform <- function(data, eieform_navn) {
+  data_eier <- data %>%
+    filter(Eieform == eieform_navn)
+  
+  prediksjoner <- predict(model_log_leil, newdata = data_eier)
+  
+  data_eier <- data_eier %>%
+    mutate(
+      Predikert_logpris = prediksjoner,
+      Predikert_Pris = exp(Predikert_logpris),
+      Predikert_Pris_Adj = exp(Predikert_logpris) * exp(sigma3 / 2)
+    )
+  
+  return(data_eier)
 }
 
-# Kjør for både Selveier og Borettslag
-pred_selveier <- prediker_leilighet_sov("Selveier")
-pred_borettslag <- prediker_leilighet_sov("Borettslag")
+```
 
-# Kombiner resultatene
-pred_resultat <- bind_rows(pred_selveier, pred_borettslag)
+```{r}
+eieformer <- c("Selveier", "Borettslag")  # Tilpass om nødvendig
 
-# Vis som flextable
-library(flextable)
-
-pred_resultat %>%
-  flextable() %>%
-  colformat_num(j = "Pris_pred", digits = 0, big.mark = " ") %>%
-  set_caption("Predikert boligpris for leiligheter med 1 og 2 soverom, alt annet likt") %>%
-  autofit()
+data_leil_predikert <- lapply(eieformer, function(ef) prediker_eieform(df_leil, ef)) %>%
+  bind_rows()
 
 ```
 
 ```{r}
-library(dplyr)
+summary_leil <- data_leil_predikert %>%
+  group_by(Eieform) %>%
+  summarise(
+    Gjennomsnitt_Predikert_Adj = mean(Predikert_Pris_Adj, na.rm = TRUE),
+    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
+    Median_Predikert_Adj = median(Predikert_Pris_Adj, na.rm = TRUE),
+    Median_Faktisk = median(Realpris, na.rm = TRUE)
+  )
 
-# Filtrer faktiske leiligheter (med Salgsår 2020 for konsistens, hvis ønsket)
-faktiske_leiligheter <- data_clean %>%
-  filter(Boligtype == "Leilighet", Soverom %in% c(1, 2)) %>%
-  group_by(Eieform, Soverom) %>%
-  summarise(Faktisk_Pris = mean(Realpris, na.rm = TRUE), .groups = "drop")
+```
 
-# Kombiner med predikert
-sammenligning <- pred_resultat %>%
-  left_join(faktiske_leiligheter, by = c("Eieform", "Soverom"))
-
-# Vis med flextable
+```{r}
 library(flextable)
 
-sammenligning %>%
+tbl_leil <- summary_leil %>%
   flextable() %>%
-  colformat_num(j = c("Pris_pred", "Faktisk_Pris"), digits = 0, big.mark = " ") %>%
-  set_caption("Sammenligning av predikert og faktisk pris for leiligheter med 1 og 2 soverom") %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert_Adj", "Gjennomsnitt_Faktisk",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
+  ) %>%
+  set_caption("Sammenligning av justert predikert og faktisk pris: Selveier vs. Borettslag") %>%
   autofit()
+
+tbl_leil
+
+```
+
+```{r}
+summary_leil <- data_leil_predikert %>%
+  group_by(Eieform) %>%
+  summarise(
+    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
+    Gjennomsnitt_Predikert_Adj = mean(Predikert_Pris_Adj, na.rm = TRUE),
+    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
+    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
+    Median_Predikert_Adj = median(Predikert_Pris_Adj, na.rm = TRUE),
+    Median_Faktisk = median(Realpris, na.rm = TRUE)
+  )
+
+```
+
+```{r}
+tbl_leil <- summary_leil %>%
+  flextable() %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Predikert_Adj",
+          "Gjennomsnitt_Faktisk", "Median_Predikert",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
+  ) %>%
+  set_caption("Sammenligning av predikert og faktisk pris: Selveier vs. Borettslag") %>%
+  autofit()
+
+tbl_leil
+
+```
+
+Soverom:
+
+```{r}
+df_leil_1_2 <- data_clean %>%
+  filter(Boligtype == "Leilighet", Soverom %in% c(1, 2))
+
+```
+
+```{r}
+model_leil_sr <- lm(log(Realpris) ~ BRA + Alder + Eieform + I(Alder^2) + Salgsår + Avstand_km,
+                    data = df_leil_1_2)
+
+```
+
+```{r}
+sigma2_sr <- mean(residuals(model_leil_sr)^2)
+
+```
+
+```{r}
+prediker_sov_eie <- function(data, ant_sov, eieform_navn) {
+  data_subset <- data %>%
+    filter(Soverom == ant_sov, Eieform == eieform_navn)
+  
+  prediksjoner <- predict(model_leil_sr, newdata = data_subset)
+  
+  data_subset <- data_subset %>%
+    mutate(
+      Predikert_logpris = prediksjoner,
+      Predikert_Pris = exp(Predikert_logpris),
+      Predikert_Pris_Adj = exp(Predikert_logpris) * exp(sigma2_sr / 2),
+      Kombinasjon = paste0(Soverom, " rom – ", Eieform)
+    )
+  
+  return(data_subset)
+}
+
+```
+
+```{r}
+sov <- c(1, 2)
+eieformer <- c("Selveier", "Borettslag")
+
+data_leil_sr_predikert <- expand.grid(sov, eieformer) %>%
+  rename(Soverom = Var1, Eieform = Var2) %>%
+  pmap_dfr(~ prediker_sov_eie(df_leil_1_2, ..1, ..2))
+
+```
+
+```{r}
+summary_sr <- data_leil_sr_predikert %>%
+  group_by(Kombinasjon) %>%
+  summarise(
+    Gjennomsnitt_Predikert = mean(Predikert_Pris, na.rm = TRUE),
+    Gjennomsnitt_Predikert_Adj = mean(Predikert_Pris_Adj, na.rm = TRUE),
+    Gjennomsnitt_Faktisk = mean(Realpris, na.rm = TRUE),
+    Median_Predikert = median(Predikert_Pris, na.rm = TRUE),
+    Median_Predikert_Adj = median(Predikert_Pris_Adj, na.rm = TRUE),
+    Median_Faktisk = median(Realpris, na.rm = TRUE)
+  )
+
+```
+
+```{r}
+tbl_sr <- summary_sr %>%
+  flextable() %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert", "Gjennomsnitt_Predikert_Adj",
+          "Gjennomsnitt_Faktisk", "Median_Predikert",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
+  ) %>%
+  set_caption("Sammenligning av predikert og faktisk pris for 1 og 2-roms leiligheter") %>%
+  autofit()
+
+tbl_sr
+
+```
+
+```{r}
+tbl_sr_kort <- summary_sr %>%
+  select(Kombinasjon,
+         Gjennomsnitt_Predikert_Adj,
+         Gjennomsnitt_Faktisk,
+         Median_Predikert_Adj,
+         Median_Faktisk) %>%
+  flextable() %>%
+  colformat_num(
+    j = c("Gjennomsnitt_Predikert_Adj", "Gjennomsnitt_Faktisk",
+          "Median_Predikert_Adj", "Median_Faktisk"),
+    digits = 0, big.mark = " "
+  ) %>%
+  set_caption("Justert predikert og faktisk pris for 1 og 2-roms leiligheter (Selveier og Borettslag)") %>%
+  autofit()
+
+tbl_sr_kort
 
 ```
 
 ### Konfidensintervall igjen
 
 ```{r}
-# Konverter til dataframes for å matche variabelnavn
+data_clean <- data_clean %>%
+  mutate(
+    Rekkehus_Selveier = ifelse(Boligtype == "Rekkehus" & Eieform == "Selveier", 1, 0),
+    Tomannsbolig_Selveier = ifelse(Boligtype == "Tomannsbolig" & Eieform == "Selveier", 1, 0)
+  )
+```
+
+```{r}
+data_clean <- data_clean %>%
+  mutate(
+    Leilighet_Selveier = ifelse(Boligtype == "Leilighet" & Eieform == "Selveier", 1, 0),
+    Rekkehus_Selveier = ifelse(Boligtype == "Rekkehus" & Eieform == "Selveier", 1, 0),
+    Tomannsbolig_Selveier = ifelse(Boligtype == "Tomannsbolig" & Eieform == "Selveier", 1, 0)
+  )
+
+```
+
+```{r}
+# 1. Opprett ny variabel for log-transformert pris
+data_clean <- data_clean %>%
+  mutate(LogRealpris = log(Realpris))
+
+# 2. Del opp i tre perioder
+data_2008_2013 <- data_clean %>% filter(Salgsår >= 2008, Salgsår <= 2013)
+data_2014_2019 <- data_clean %>% filter(Salgsår >= 2014, Salgsår <= 2019)
+data_2020_2024 <- data_clean %>% filter(Salgsår >= 2020, Salgsår <= 2024)
+
+# 3. Sett opp recipe (felles for alle)
+library(recipes)
+recipe_spec <- recipe(LogRealpris ~ BRA + Soverom + Alder + har_fellesgjeld + Avstand_km + Boligtype + Eieform + Leilighet_Selveier + Rekkehus_Selveier + Tomannsbolig_Selveier,
+                      data = data_clean) %>%
+  step_mutate(
+    Alder = as.numeric(Alder),
+    Eieform = as.factor(Eieform),
+    Boligtype = as.factor(Boligtype),
+)
+
+# 4. Sett opp modell og workflow
+library(parsnip)
+library(workflows)
+
+model_spec <- linear_reg() %>%
+  set_engine("lm")
+
+workflow_spec <- workflow() %>%
+  add_model(model_spec) %>%
+  add_recipe(recipe_spec)
+
+# 5. Tren modellene for hver periode
+model_fit_2008_2013 <- workflow_spec %>% fit(data = data_2008_2013)
+model_fit_2014_2019 <- workflow_spec %>% fit(data = data_2014_2019)
+model_fit_2020_2024 <- workflow_spec %>% fit(data = data_2020_2024)
+
+
+```
+
+```{r}
+library(broom)
+
+point_estimates_df <- tidy(model_log)
+point_estimates <- setNames(point_estimates_df$estimate, point_estimates_df$term)
+
+```
+
+```{r}
+library(parsnip)
+
+ci_2008_2013 <- confint(extract_fit_engine(model_fit_2008_2013))
+ci_2014_2019 <- confint(extract_fit_engine(model_fit_2014_2019))
+ci_2020_2024 <- confint(extract_fit_engine(model_fit_2020_2024))
+
+```
+
+```{r}
+rownames(ci_2008_2013) <- rownames(ci_2008_2013)
+rownames(ci_2014_2019) <- rownames(ci_2014_2019)
+rownames(ci_2020_2024) <- rownames(ci_2020_2024)
+
 ci_2008_2013_df <- as.data.frame(ci_2008_2013)
 ci_2014_2019_df <- as.data.frame(ci_2014_2019)
 ci_2020_2024_df <- as.data.frame(ci_2020_2024)
 
-# Sikre at alle dataframes har samme variabler som hovedmodellen
-common_vars <- intersect(names(point_estimates), rownames(ci_2008_2013_df))
-common_vars <- intersect(common_vars, rownames(ci_2014_2019_df))
-common_vars <- intersect(common_vars, rownames(ci_2020_2024_df))
+```
 
-# Filtrer variabler for sammenligning
+```{r}
+# Hent punktestimatene fra hovedmodellen (model_log)
+library(broom)
+
+point_estimates_df <- tidy(model_log)
+point_estimates <- setNames(point_estimates_df$estimate, point_estimates_df$term)
+
+# Finn felles variabler (kun de som finnes i alle modeller)
+common_vars <- Reduce(intersect, list(
+  names(point_estimates),
+  rownames(ci_2008_2013_df),
+  rownames(ci_2014_2019_df),
+  rownames(ci_2020_2024_df)
+))
+
+# Filtrer til bare felles variabler
 point_estimates_filtered <- point_estimates[common_vars]
 ci_2008_2013_filtered <- ci_2008_2013_df[common_vars, ]
 ci_2014_2019_filtered <- ci_2014_2019_df[common_vars, ]
 ci_2020_2024_filtered <- ci_2020_2024_df[common_vars, ]
 
-# Lag en sammenligningstabell
+# Lag samlet sammenligningstabell
 comparison_df <- data.frame(
   Variable = common_vars,
   Punktestimat_Hele = point_estimates_filtered,
-  CI_Low_2008_2013 = ci_2008_2013_filtered[,1],
-  CI_High_2008_2013 = ci_2008_2013_filtered[,2],
-  CI_Low_2014_2019 = ci_2014_2019_filtered[,1],
-  CI_High_2014_2019 = ci_2014_2019_filtered[,2],
-  CI_Low_2020_2024 = ci_2020_2024_filtered[,1],
-  CI_High_2020_2024 = ci_2020_2024_filtered[,2]
+  CI_Low_2008_2013 = ci_2008_2013_filtered[, 1],
+  CI_High_2008_2013 = ci_2008_2013_filtered[, 2],
+  CI_Low_2014_2019 = ci_2014_2019_filtered[, 1],
+  CI_High_2014_2019 = ci_2014_2019_filtered[, 2],
+  CI_Low_2020_2024 = ci_2020_2024_filtered[, 1],
+  CI_High_2020_2024 = ci_2020_2024_filtered[, 2]
 )
 
-# Se resultatene
-print(comparison_df)
-
-```
-
-```{r}
-# Legg til kolonner som viser om punktestimatet ligger innenfor konfidensintervallet
+# Legg til TRUE/FALSE for om punktestimatet fra hele perioden ligger innenfor CI
 comparison_df <- comparison_df %>%
   mutate(
-    Innenfor_2008_2013 = Punktestimat_Hele >= CI_Low_2008_2013 & Punktestimat_Hele <= CI_High_2008_2013,
-    Innenfor_2014_2019 = Punktestimat_Hele >= CI_Low_2014_2019 & Punktestimat_Hele <= CI_High_2014_2019,
-    Innenfor_2020_2024 = Punktestimat_Hele >= CI_Low_2020_2024 & Punktestimat_Hele <= CI_High_2020_2024
+    In_CI_2008_2013 = Punktestimat_Hele >= CI_Low_2008_2013 & Punktestimat_Hele <= CI_High_2008_2013,
+    In_CI_2014_2019 = Punktestimat_Hele >= CI_Low_2014_2019 & Punktestimat_Hele <= CI_High_2014_2019,
+    In_CI_2020_2024 = Punktestimat_Hele >= CI_Low_2020_2024 & Punktestimat_Hele <= CI_High_2020_2024
   )
 
-# Skriv ut resultatet
+# Vis resultatet
 print(comparison_df)
 
 ```
 
 ```{r}
-# Gjør om tabellen til en pent formatert flextable
-tbl_comparison <- comparison_df %>%
-  flextable() %>%
-  colformat_num(j = c("Punktestimat_Hele", 
-                      "CI_Low_2008_2013", "CI_High_2008_2013",
-                      "CI_Low_2014_2019", "CI_High_2014_2019",
-                      "CI_Low_2020_2024", "CI_High_2020_2024"), 
-                digits = 4) %>%
-  set_caption("Sammenligning av punktestimat og konfidensintervaller") %>%
+# Lag komplett liste over variabler fra hovedmodellen
+alle_var <- names(point_estimates)
+
+# Funksjon for å hente lav/høy CI eller returnere NA hvis variabelen ikke finnes
+hent_ci <- function(ci_df, varnavn, kol) {
+  if (varnavn %in% rownames(ci_df)) {
+    return(ci_df[varnavn, kol])
+  } else {
+    return(NA)
+  }
+}
+
+# Bygg sammenligningstabell
+comparison_df <- data.frame(
+  Variable = alle_var,
+  Punktestimat_Hele = point_estimates[alle_var],
+  CI_Low_2008_2013 = sapply(alle_var, hent_ci, ci_df = ci_2008_2013_df, kol = 1),
+  CI_High_2008_2013 = sapply(alle_var, hent_ci, ci_df = ci_2008_2013_df, kol = 2),
+  CI_Low_2014_2019 = sapply(alle_var, hent_ci, ci_df = ci_2014_2019_df, kol = 1),
+  CI_High_2014_2019 = sapply(alle_var, hent_ci, ci_df = ci_2014_2019_df, kol = 2),
+  CI_Low_2020_2024 = sapply(alle_var, hent_ci, ci_df = ci_2020_2024_df, kol = 1),
+  CI_High_2020_2024 = sapply(alle_var, hent_ci, ci_df = ci_2020_2024_df, kol = 2)
+) |> 
+  filter(
+    !Variable %in% c("I(Alder^2)", "BoligtypeEnebolig", "EieformBorettslag")
+  )
+
+```
+
+**NB!!**Denne koden gjør at jeg får opp False og True, ikke kjør den om du ikke øsnsker det.
+
+```{r}
+comparison_df$Utenfor_CI_2008_2013 <- with(comparison_df,
+  Punktestimat_Hele < CI_Low_2008_2013 | Punktestimat_Hele > CI_High_2008_2013)
+
+comparison_df$Utenfor_CI_2014_2019 <- with(comparison_df,
+  Punktestimat_Hele < CI_Low_2014_2019 | Punktestimat_Hele > CI_High_2014_2019)
+
+comparison_df$Utenfor_CI_2020_2024 <- with(comparison_df,
+  Punktestimat_Hele < CI_Low_2020_2024 | Punktestimat_Hele > CI_High_2020_2024)
+```
+
+```{r}
+library(flextable)
+
+flextable(comparison_df) %>%
+  set_caption("Sammenligning av punktestimat og 95 % konfidensintervall fra ulike perioder") %>%
   autofit()
 
-# Vis tabellen
-tbl_comparison
+```
+
+```{r}
+library(flextable)
+
+flextable(comparison_df) %>%
+  set_caption("Sammenligning av punktestimat og 95 % konfidensintervall fra ulike perioder") %>%
+  autofit()
 
 ```

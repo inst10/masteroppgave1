@@ -1,0 +1,340 @@
+---
+title: "therealdeal"
+format: 
+  html: default
+  typst:
+    papersize: a4
+    fontsize: 11pt
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| message: false
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(stringr)
+library(lubridate)
+library(flextable)
+library(tidymodels)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sandwich)
+library(lmtest)
+```
+
+### Hedonisk prismodell
+
+Laster inn datasett og filtrerer
+
+```{r}
+data <- read_excel("2025_HVL_Stromme_Data.xlsx")
+```
+
+```{r}
+avstander_haugesund <- read_excel("avstander_haugesund.xlsx")
+```
+
+```{r}
+grunnkretser_navn <- read_excel("grunnkretser_navn.xlsx")
+```
+
+```{r}
+avstander_haugesund <- avstander_haugesund %>%
+  rename(Avstand_km = network_cost_km)
+```
+
+```{r}
+grunnkretser_navn <- grunnkretser_navn %>%
+  rename(Grunnkrets = Grunnkretsnavn)
+```
+
+```{r}
+# Behold kun de nødvendige kolonnene i avstander_haugesund
+avstander_haugesund <- avstander_haugesund %>%
+  select(Grunnkretskode, Avstand_km)
+```
+
+```{r}
+avstander_haugesund <- avstander_haugesund %>%
+  left_join(grunnkretser_navn, by = "Grunnkretskode")
+```
+
+```{r}
+data <- data %>%
+  mutate(Grunnkrets = str_to_title(Grunnkrets),
+         Kommune = str_to_title(Kommune)
+         )
+
+```
+
+```{r}
+data <- data |> 
+  left_join(avstander_haugesund, by = "Grunnkrets")
+```
+
+```{r}
+# Konverter begge Grunnkrets-kolonnene til character
+data$Grunnkrets <- as.character(data$Grunnkrets)
+avstander_haugesund$Grunnkrets <- as.character(avstander_haugesund$Grunnkrets)
+
+# Nå kan vi gjøre join
+data <- data %>%
+  left_join(avstander_haugesund, by = "Grunnkrets")
+
+```
+
+```{r}
+# Konverter til datoformat (hvis nødvendig)
+data$Salgsdato <- as.Date(data$Salgsdato, format="%d.%m.%Y")
+
+# Trekk ut året og lag "Salgsår"-variabel
+data$Salgsår <- year(data$Salgsdato)
+
+# Sjekk at endringen er gjort riktig
+table(data$Salgsår)
+
+# Fjern "Salgsdato" hvis du ikke trenger den
+data$Salgsdato <- NULL
+
+```
+
+###### Setter inn KPI
+
+```{r}
+kpi_data <- tibble(
+    Salgsår = 2008:2024,
+
+    kpi = c(88, 89.9, 92.1, 93.3, 93.9, 95.9, 97.9, 100, 103.6,
+105.5, 108.4, 110.8, 112.2, 116.1, 122.8, 129.6, 133.6)
+
+) |>
+
+    mutate(kpi_basis = kpi[Salgsår == 2008])
+```
+
+```{r}
+data <- data |>
+    left_join(y = kpi_data,
+        join_by("Salgsår")
+    )
+```
+
+###### Får realpris
+
+```{r}
+data$Realpris <- (data$Pris + data$Fellesgjeld) * (data$kpi_basis/ data$kpi)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data, aes(x = Salgsår)) +
+  geom_line(aes(y = Pris, color = "Nominell pris")) +
+  geom_line(aes(y = Realpris, color = "Realpris (2008-nivå)")) +
+  labs(title = "Sammenligning av nominelle priser og realpriser",
+       y = "Pris", x = "År") +
+  theme_minimal()
+
+```
+
+```{r}
+# Forsøk å lage `Alder` på en trygg måte
+data <- data %>%
+  mutate(
+    Byggeår = as.numeric(as.character(Byggeår)),  # Konverter til numerisk
+    Salgsår = as.numeric(as.character(Salgsår)),  # Konverter til numerisk
+    Alder = ifelse(!is.na(Byggeår) & !is.na(Salgsår), Salgsår - Byggeår, NA)  # Beregn alder
+  )
+
+# Sjekk resultatet
+summary(data$Alder)
+
+```
+
+```{r}
+colSums(is.na(data))
+
+```
+
+```{r}
+# Fjerner rader med NA i de viktigste variablene
+data_clean <- data %>%
+  filter(!is.na(BRA) & !is.na(Soverom) & !is.na(Byggeår) & !is.na(Alder))
+
+# Sjekker hvor mange rader som er igjen
+nrow(data_clean)
+
+```
+
+###### Legger til Alder\^2
+
+```{r}
+# Filtrer ut boliger eldre enn 150 år
+data_clean <- data_clean %>% filter(Alder <= 2000)
+
+# Sjekk fordeling etter filtrering
+summary(data_clean$Alder)
+hist(data_clean$Alder, breaks = 50, main = "Aldersfordeling etter filtrering")
+```
+
+sletter variabler jeg ikke trenger
+
+```{r}
+# Fjern unødvendige variabler
+data_clean <- data_clean %>%
+  select(-EiendomsID, -Kommune, -Etasje, -Tomtestørrelse, 
+       -Grunnkretskode.x, -Avstand_km.x)
+
+# Sjekk at variablene er fjernet
+glimpse(data_clean)  # Eller bruk: colnames(data_clean)
+
+```
+
+```{r}
+
+data_clean <- data_clean %>%
+  rename(
+    Grunnkretskode = Grunnkretskode.y,
+    Avstand_km = Avstand_km.y
+  )
+
+```
+
+setter fellesgjeld til Dummy 0 og 1
+
+```{r}
+data_clean$har_fellesgjeld <- ifelse(data_clean$Fellesgjeld > 0, 1, 0)
+
+```
+
+#### **Lineær regresjon med Realpris (justert for KPI) som avhengig variabel:**
+
+```{r}
+model1 <- lm(Realpris ~ BRA + Soverom + Byggeår + Boligtype + Eieform + Grunnkrets + Alder + factor(Salgsår) + Fellesgjeld, 
+            data = data_clean)
+summary(model1)
+```
+
+#### Log transformasjon:
+
+```{r}
+# Sett ønskede referansekategorier
+data_clean$Boligtype <- relevel(factor(data_clean$Boligtype), ref = "Rekkehus")
+data_clean$Eieform <- relevel(factor(data_clean$Eieform), ref = "Selveier")
+data_clean$Salgsår <- relevel(factor(data_clean$Salgsår), ref = "2008")
+
+```
+
+```{r}
+# Log-transformert regresjon
+#| label: tbl-logreg
+#| tbl-cap: Regresjonsmodell
+model_log <- data_clean |> 
+  mutate(
+    Boligtype = fct(as.character(Boligtype)),
+    Eieform = fct(as.character(Eieform)),
+    Salgsår = fct(as.character(Salgsår)),
+    Leilighet_Selveier = ifelse(Boligtype == "Leilighet" & Eieform == "Selveier", 1, 0),
+        Rekkehus_Selveier = ifelse(Boligtype == "Rekkehus" & Eieform == "Selveier", 1, 0),
+    Tomannsbolig_Selveier = ifelse(Boligtype == "Tomannsbolig" & Eieform == "Selveier", 1, 0)
+  ) %>%
+  lm(
+    formula = log(Realpris) ~ BRA + Soverom + Alder + I(Alder^2) + har_fellesgjeld + Avstand_km + Boligtype + Eieform + Leilighet_Selveier + Rekkehus_Selveier + Tomannsbolig_Selveier + Salgsår,
+    data = .
+    )
+
+summary(model_log)
+
+model_log |>  as_flextable() |> 
+line_spacing(space = 0.3)
+
+```
+
+#### Heteroskedastisitet
+
+```{r}
+library(lmtest)
+
+# Sjekker om heteroskedastisitet er til stede
+bptest(model_log)
+
+```
+
+```{r}
+#for finere resultat:
+library(lmtest)
+library(flextable)
+
+# Kjør testen
+bp_result <- bptest(model_log)
+
+# Lag en data frame med testresultatene
+tbl_bp_test <- data.frame(
+  Test = "Breusch-Pagan",
+  BP_statistic = round(bp_result$statistic, 2),
+  df = bp_result$parameter,
+  p_value = format.pval(bp_result$p.value, digits = 4, eps = 0.0001)
+)
+
+# Konverter til en pen flextable-tabell
+tbl_bp_test_flex <- flextable(tbl_bp_test) %>%
+  set_caption("Breusch-Pagan test for heteroskedastisitet")
+
+# Vis tabellen
+tbl_bp_test_flex
+
+```
+
+For å sikre at modellestimatene er robuste, har jeg testet og justert for heteroskedastisitet i den log-transformerte hedoniske prismodellen.
+For å teste for heteroskedastisitet ble Breusch-Pagan-testen gjennomført.
+Testen har følgende hypoteser:
+
+H₀: Variansen til residualene er konstant (homoskedastisitet).
+
+H₁: Variansen til residualene er ikke konstant og avhenger av de uavhengige variablene (heteroskedastisitet).
+
+Resultatet av testen viser en teststatistikk på BP = 1516.5, med en p-verdi \< 2.2e-16.
+Siden p-verdien er svært lav, kan nullhypotesen om homoskedastisitet forkastes til fordel for alternativhypotesen.
+Dette indikerer at det er heteroskedastisitet i modellen, noe som kan føre til upålitelige standardfeil og p-verdier.
+For å korrigere for dette benyttes robuste standardfeil i videre analyser.
+
+Videre bruker jeg regresjon mot robuste standardfeil.
+**Første koden viser mange desimaler på p_value, så kjør den nedenfor så får man en finere modell:**
+
+```{r}
+# Installer og last inn nødvendige pakker
+# dette er samme kode som under, bare FINERE pga flxtable
+install.packages("flextable")
+library(flextable)
+
+# Lag en data frame med regresjonsresultatene
+tbl_regresjon <- data.frame(
+  Variabel = rownames(coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))),
+  Estimate = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,1],
+  Std_Error = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,2],
+  t_value = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,3],
+  p_value = coeftest(model_log, vcov = vcovHC(model_log, type = "HC1"))[,4]
+)
+
+# Lag en flextable for å formatere tabellen pent
+tbl_regresjon %>%
+  flextable() %>%
+  colformat_num(j = c("Estimate", "Std_Error", "t_value", "p_value"), digits = 4) %>%
+  set_caption("Regresjonsresultater med robuste standardfeil") %>%
+  autofit()
+
+
+```
+
+```{r}
+tbl_regresjon %>%
+  flextable() %>%
+  colformat_num(j = c("Estimate", "Std_Error", "t_value"), digits = 4) %>%
+  colformat_double(j = "p_value", digits = 5) %>%
+  set_caption("Regresjonsresultater med robuste standardfeil") %>%
+  autofit()
+
+```
